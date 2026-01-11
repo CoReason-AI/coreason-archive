@@ -1,6 +1,6 @@
 import json
 from pathlib import Path
-from typing import List, Optional, Tuple
+from typing import Any, List, Literal, Optional, Tuple
 
 import networkx as nx
 from networkx.readwrite import json_graph
@@ -8,21 +8,24 @@ from networkx.readwrite import json_graph
 from coreason_archive.models import GraphEdgeType
 from coreason_archive.utils.logger import logger
 
+Direction = Literal["outgoing", "incoming", "both"]
+
 
 class GraphStore:
     """
     A lightweight Graph Store using NetworkX for in-memory graph operations
-    and JSON for persistence.
+    and JSON for persistence. Uses MultiDiGraph to support multiple edge types
+    between the same nodes.
     """
 
-    def __init__(self, graph: Optional[nx.DiGraph] = None):
+    def __init__(self, graph: Optional[nx.MultiDiGraph] = None):
         """
         Initialize the GraphStore.
 
         Args:
-            graph: An optional existing NetworkX DiGraph. If None, creates a new one.
+            graph: An optional existing NetworkX MultiDiGraph. If None, creates a new one.
         """
-        self.graph = graph if graph is not None else nx.DiGraph()
+        self.graph = graph if graph is not None else nx.MultiDiGraph()
 
     def add_entity(self, entity_string: str) -> None:
         """
@@ -50,6 +53,7 @@ class GraphStore:
         """
         Adds a directed edge between source and target entities with a specific relationship type.
         Ensures nodes exist before adding the edge.
+        Uses the relation type as the key to allow multiple distinct relationships.
 
         Args:
             source: The source entity string.
@@ -62,30 +66,50 @@ class GraphStore:
         if not self.graph.has_node(target):
             self.add_entity(target)
 
-        self.graph.add_edge(source, target, relation=relation.value)
+        # Use relation value as key to ensure uniqueness per relation type
+        self.graph.add_edge(source, target, key=relation.value, relation=relation.value)
         logger.debug(f"Added edge: {source} -> {target} [{relation.value}]")
 
-    def get_related_entities(self, entity: str, relation: Optional[GraphEdgeType] = None) -> List[Tuple[str, str]]:
+    def get_related_entities(
+        self,
+        entity: str,
+        relation: Optional[GraphEdgeType] = None,
+        direction: Direction = "outgoing",
+    ) -> List[Tuple[str, str]]:
         """
         Retrieves entities related to the given entity.
 
         Args:
             entity: The source entity string.
             relation: Optional filter for a specific relationship type.
+            direction: Direction of edges to consider ("outgoing", "incoming", "both").
 
         Returns:
-            A list of tuples (target_entity, relation_type).
+            A list of tuples (related_entity, relation_type).
         """
         if not self.graph.has_node(entity):
             return []
 
         related = []
-        for neighbor in self.graph.neighbors(entity):
-            edge_data = self.graph.get_edge_data(entity, neighbor)
-            edge_relation = edge_data.get("relation")
 
-            if relation is None or edge_relation == relation.value:
-                related.append((neighbor, edge_relation))
+        # Helper to process edges
+        def process_edges(edges: Any, is_incoming: bool) -> None:
+            for u, v, _key, data in edges:
+                # For incoming edges (u->entity), neighbor is u.
+                # For outgoing edges (entity->v), neighbor is v.
+                neighbor = u if is_incoming else v
+                edge_relation = data.get("relation")
+
+                if relation is None or edge_relation == relation.value:
+                    related.append((neighbor, edge_relation))
+
+        if direction in ("outgoing", "both"):
+            # out_edges(entity, data=True, keys=True) yields (entity, neighbor, key, data)
+            process_edges(self.graph.out_edges(entity, data=True, keys=True), is_incoming=False)
+
+        if direction in ("incoming", "both"):
+            # in_edges(entity, data=True, keys=True) yields (neighbor, entity, key, data)
+            process_edges(self.graph.in_edges(entity, data=True, keys=True), is_incoming=True)
 
         return related
 
@@ -115,5 +139,5 @@ class GraphStore:
         with open(filepath, "r", encoding="utf-8") as f:
             data = json.load(f)
 
-        self.graph = json_graph.node_link_graph(data, directed=True, multigraph=False)
+        self.graph = json_graph.node_link_graph(data, directed=True, multigraph=True)
         logger.info(f"Graph loaded from {filepath}")
