@@ -13,6 +13,12 @@ class MemoryScope(str, Enum):
     CLIENT = "CLIENT"
 
 
+class GraphEdgeType(str, Enum):
+    CREATED = "CREATED"
+    BELONGS_TO = "BELONGS_TO"
+    RELATED_TO = "RELATED_TO"
+
+
 class CachedThought(BaseModel):
     """
     Represents a single cognitive state or reasoning trace stored in the archive.
