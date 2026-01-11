@@ -87,6 +87,81 @@ async def test_relocation_sanitization(
 
 
 @pytest.mark.asyncio
+async def test_relocation_mixed_contamination(
+    manager: CoreasonRelocationManager, vector_store: VectorStore, graph_store: GraphStore
+) -> None:
+    """
+    Scenario: Thought contains both Safe and Unsafe entities.
+    Expectation: Thought is DELETED because it contains contaminated info.
+    """
+    user_id = "user_mixed"
+    old_dept = "DeptA"
+
+    # Setup Graph
+    graph_store.add_relationship("Project:Unsafe", f"Department:{old_dept}", GraphEdgeType.BELONGS_TO)
+    graph_store.add_entity("Project:Safe")
+
+    # Thought has both
+    thought = create_thought(user_id, ["Project:Safe", "Project:Unsafe"], "Mixed Content")
+    vector_store.add(thought)
+
+    # Run Transfer
+    await manager.on_dept_transfer(user_id, old_dept, "DeptB")
+
+    # Verify Deletion
+    remaining = vector_store.get_by_scope(MemoryScope.USER, user_id)
+    assert len(remaining) == 0
+
+
+@pytest.mark.asyncio
+async def test_entities_with_no_dept_link(
+    manager: CoreasonRelocationManager, vector_store: VectorStore, graph_store: GraphStore
+) -> None:
+    """
+    Scenario: Thought has entities, but those entities are NOT linked to the old department.
+    Expectation: Kept.
+    """
+    user_id = "user_orphan"
+    old_dept = "DeptA"
+
+    # Setup Graph: Entity exists but has no BELONGS_TO edges
+    graph_store.add_entity("Project:Orphan")
+    # Entity linked to unrelated department
+    graph_store.add_relationship("Project:Other", "Department:Other", GraphEdgeType.BELONGS_TO)
+
+    thought = create_thought(user_id, ["Project:Orphan", "Project:Other"], "Safe Content")
+    vector_store.add(thought)
+
+    await manager.on_dept_transfer(user_id, old_dept, "DeptB")
+
+    assert len(vector_store.thoughts) == 1
+
+
+@pytest.mark.asyncio
+async def test_idempotency(
+    manager: CoreasonRelocationManager, vector_store: VectorStore, graph_store: GraphStore
+) -> None:
+    """
+    Scenario: Run transfer twice.
+    Expectation: Second run does nothing, no errors.
+    """
+    user_id = "user_idem"
+    old_dept = "DeptA"
+
+    graph_store.add_relationship("Project:X", f"Department:{old_dept}", GraphEdgeType.BELONGS_TO)
+    thought = create_thought(user_id, ["Project:X"], "Unsafe")
+    vector_store.add(thought)
+
+    # First Run
+    await manager.on_dept_transfer(user_id, old_dept, "DeptB")
+    assert len(vector_store.thoughts) == 0
+
+    # Second Run
+    await manager.on_dept_transfer(user_id, old_dept, "DeptB")
+    assert len(vector_store.thoughts) == 0
+
+
+@pytest.mark.asyncio
 async def test_relocation_no_effect_on_other_scopes(
     manager: CoreasonRelocationManager, vector_store: VectorStore, graph_store: GraphStore
 ) -> None:
