@@ -5,7 +5,7 @@ import pytest
 
 from coreason_archive.graph_store import GraphStore
 from coreason_archive.models import CachedThought, GraphEdgeType, MemoryScope
-from coreason_archive.relocation import CoreasonRelocationManager
+from coreason_archive.relocation import CoreasonRelocationManager, StubRelocationManager
 from coreason_archive.vector_store import VectorStore
 
 
@@ -205,3 +205,12 @@ async def test_relocation_role_change_passive(manager: CoreasonRelocationManager
     """Test that on_role_change is passive (no error)."""
     await manager.on_role_change("user_1", ["admin"])
     # If no exception, passed.
+
+
+@pytest.mark.asyncio
+async def test_stub_relocation_manager() -> None:
+    """Test that the stub methods can be called without error."""
+    stub = StubRelocationManager()
+    await stub.on_role_change("user_1", ["admin"])
+    await stub.on_dept_transfer("user_1", "dept_old", "dept_new")
+    assert True
