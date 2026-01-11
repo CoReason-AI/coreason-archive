@@ -1,5 +1,6 @@
+import asyncio
 from datetime import datetime, timezone
-from typing import List, Optional, Tuple
+from typing import Any, List, Optional, Set, Tuple
 from uuid import uuid4
 
 from coreason_archive.federation import FederationBroker, UserContext
@@ -39,6 +40,7 @@ class CoreasonArchive:
         self.embedder = embedder
         self.entity_extractor = entity_extractor
         self.temporal_ranker = TemporalRanker()
+        self._background_tasks: Set[asyncio.Task[Any]] = set()
 
     async def add_thought(
         self,
@@ -96,7 +98,9 @@ class CoreasonArchive:
 
         # 4. Background Extraction
         if self.entity_extractor:
-            await self.process_entities(thought, combined_text)
+            task = asyncio.create_task(self.process_entities(thought, combined_text))
+            self._background_tasks.add(task)
+            task.add_done_callback(self._background_tasks.discard)
 
         return thought
 
