@@ -1,10 +1,11 @@
 import json
 from pathlib import Path
 from typing import List, Tuple
+from uuid import UUID
 
 import numpy as np
 
-from coreason_archive.models import CachedThought
+from coreason_archive.models import CachedThought, MemoryScope
 from coreason_archive.utils.logger import logger
 
 
@@ -33,6 +34,43 @@ class VectorStore:
         self.thoughts.append(thought)
         self._vectors.append(thought.vector)
         logger.debug(f"Added thought {thought.id} to VectorStore.")
+
+    def delete(self, thought_id: UUID) -> bool:
+        """
+        Removes a thought by its ID.
+
+        Args:
+            thought_id: The UUID of the thought to remove.
+
+        Returns:
+            True if the thought was found and removed, False otherwise.
+        """
+        try:
+            # Find index of thought
+            index = next(i for i, t in enumerate(self.thoughts) if t.id == thought_id)
+
+            # Remove from both lists to keep them in sync
+            self.thoughts.pop(index)
+            self._vectors.pop(index)
+
+            logger.debug(f"Deleted thought {thought_id} from VectorStore.")
+            return True
+        except StopIteration:
+            logger.warning(f"Attempted to delete non-existent thought {thought_id}")
+            return False
+
+    def get_by_scope(self, scope: MemoryScope, scope_id: str) -> List[CachedThought]:
+        """
+        Retrieves all thoughts matching the given scope and scope_id.
+
+        Args:
+            scope: The memory scope (e.g., USER).
+            scope_id: The scope identifier (e.g., user_id).
+
+        Returns:
+            A list of matching CachedThought objects.
+        """
+        return [t for t in self.thoughts if t.scope == scope and t.scope_id == scope_id]
 
     def search(
         self, query_vector: List[float], limit: int = 10, min_score: float = 0.0

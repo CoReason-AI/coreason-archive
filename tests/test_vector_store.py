@@ -269,3 +269,15 @@ def test_duplicate_handling() -> None:
     assert results[1][0].id == thought.id
     # Both have score 1.0
     assert pytest.approx(results[0][1], abs=1e-5) == 1.0
+
+
+def test_delete_missing_thought() -> None:
+    """Test that deleting a thought that doesn't exist returns False."""
+    store = VectorStore()
+    assert store.delete(uuid4()) is False
+
+
+def test_get_by_scope_empty() -> None:
+    """Test retrieving thoughts by scope when none match."""
+    store = VectorStore()
+    assert store.get_by_scope(MemoryScope.USER, "unknown") == []
