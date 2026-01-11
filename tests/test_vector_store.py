@@ -1,3 +1,4 @@
+import json
 from datetime import datetime
 from pathlib import Path
 from tempfile import TemporaryDirectory
@@ -10,7 +11,9 @@ from coreason_archive.models import CachedThought, MemoryScope
 from coreason_archive.vector_store import VectorStore
 
 
-def create_dummy_thought(vector: list[float], scope: MemoryScope = MemoryScope.USER) -> CachedThought:
+def create_dummy_thought(
+    vector: list[float], scope: MemoryScope = MemoryScope.USER, text: str = "test"
+) -> CachedThought:
     """Helper to create a dummy thought with a specific vector."""
     return CachedThought(
         id=uuid4(),
@@ -18,9 +21,9 @@ def create_dummy_thought(vector: list[float], scope: MemoryScope = MemoryScope.U
         entities=["Entity:Test"],
         scope=scope,
         scope_id="test_scope",
-        prompt_text="test prompt",
+        prompt_text=f"prompt {text}",
         reasoning_trace="test trace",
-        final_response="test response",
+        final_response=f"response {text}",
         source_urns=[],
         created_at=datetime.now(),
         ttl_seconds=3600,
@@ -160,4 +163,109 @@ def test_complex_vectors() -> None:
     # Search with same vector
     results = store.search(vec)
     assert len(results) == 1
+    assert pytest.approx(results[0][1], abs=1e-5) == 1.0
+
+
+# --- New Edge Cases & Complex Scenarios ---
+
+
+def test_numerical_stability() -> None:
+    """Test with very small vector magnitudes to ensure stability."""
+    store = VectorStore()
+    # Very small vector
+    small_vec = [1e-10, 1e-10]
+    thought = create_dummy_thought(small_vec)
+    store.add(thought)
+
+    # Search with same small vector
+    # Dot product will be ~2e-20, Norm will be ~1.4e-10
+    # Cosine sim should still be 1.0
+    results = store.search(small_vec)
+
+    assert len(results) == 1
+    assert pytest.approx(results[0][1], abs=1e-5) == 1.0
+
+
+def test_needle_in_haystack() -> None:
+    """Test finding a specific vector among many random ones."""
+    store = VectorStore()
+
+    # Add 100 random noise vectors
+    np.random.seed(42)
+    for i in range(100):
+        # random vector on unit circle
+        v = np.random.randn(10).tolist()
+        store.add(create_dummy_thought(v, text=f"noise_{i}"))
+
+    # Add the "needle" (orthogonal to noise or just distinct)
+    # Using a fixed distinctive pattern
+    needle_vec = [10.0] * 10
+    needle_thought = create_dummy_thought(needle_vec, text="needle")
+    store.add(needle_thought)
+
+    # Search for the needle
+    results = store.search(needle_vec, limit=5)
+
+    # Expect needle at top
+    assert len(results) >= 1
+    assert results[0][0].id == needle_thought.id
+    assert pytest.approx(results[0][1], abs=1e-5) == 1.0
+
+
+def test_corrupted_file_loading() -> None:
+    """Test loading a corrupted JSON file raises appropriate error."""
+    with TemporaryDirectory() as tmp_dir:
+        filepath = Path(tmp_dir) / "corrupt.json"
+
+        # Write garbage
+        with open(filepath, "w") as f:
+            f.write("{ invalid json [")
+
+        store = VectorStore()
+        # Should raise JSONDecodeError
+        with pytest.raises(json.JSONDecodeError):
+            store.load(filepath)
+
+
+def test_unicode_persistence() -> None:
+    """Verify that complex Unicode characters are preserved."""
+    with TemporaryDirectory() as tmp_dir:
+        filepath = Path(tmp_dir) / "unicode.json"
+        store = VectorStore()
+
+        unicode_text = "Hello 🌍! This is a test: 日本語, العربية, 🐍."
+        thought = create_dummy_thought([1.0, 0.0], text=unicode_text)
+        thought.final_response = unicode_text  # Ensure it's in a field we check
+
+        store.add(thought)
+        store.save(filepath)
+
+        new_store = VectorStore()
+        new_store.load(filepath)
+
+        assert len(new_store.thoughts) == 1
+        loaded = new_store.thoughts[0]
+        assert loaded.final_response == unicode_text
+        assert "🌍" in loaded.final_response
+
+
+def test_duplicate_handling() -> None:
+    """Verify behavior when adding duplicate thoughts (same ID)."""
+    store = VectorStore()
+
+    thought = create_dummy_thought([1.0, 0.0])
+
+    # Add same object twice
+    store.add(thought)
+    store.add(thought)
+
+    # Current implementation appends both
+    assert len(store.thoughts) == 2
+
+    # Search should return both
+    results = store.search([1.0, 0.0])
+    assert len(results) == 2
+    assert results[0][0].id == thought.id
+    assert results[1][0].id == thought.id
+    # Both have score 1.0
     assert pytest.approx(results[0][1], abs=1e-5) == 1.0
