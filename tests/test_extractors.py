@@ -90,3 +90,122 @@ async def test_complex_drug_example() -> None:
     entities = await extractor.extract(text)
 
     assert "Drug:Cisplatin" in entities
+
+
+# --- Edge Cases & Complex Scenarios ---
+
+
+@pytest.mark.asyncio
+async def test_unicode_entities() -> None:
+    """
+    Test extraction of non-ASCII entities.
+    Python's \w matches Unicode alphanumeric characters.
+    """
+    extractor = RegexEntityExtractor()
+    text = "User:Jülès is leading Project:Ωmega."
+
+    entities = await extractor.extract(text)
+
+    assert "User:Jülès" in entities
+    assert "Project:Ωmega" in entities
+
+
+@pytest.mark.asyncio
+async def test_whitespace_and_formatting() -> None:
+    """Test irregular whitespace handling (tabs, newlines, multiple spaces)."""
+    extractor = RegexEntityExtractor()
+    # "User\tAlice" should match "User Alice" pattern logic (since \s matches \t)
+    text = """
+    User\tAlice
+    Project:    Big-Data
+    Dept
+    Finance
+    """
+
+    entities = await extractor.extract(text)
+
+    assert "User:Alice" in entities
+    assert "Project:Big-Data" in entities
+    assert "Dept:Finance" in entities
+
+
+@pytest.mark.asyncio
+async def test_false_positive_awareness() -> None:
+    """
+    Document behavior for sentences where keywords are used as nouns.
+    The simple regex approach will extract these as entities.
+    This test ensures we are aware of this limitation (it's a feature of the heuristic).
+    """
+    extractor = RegexEntityExtractor()
+    text = "Good Project management is essential. User behavior is complex."
+
+    entities = await extractor.extract(text)
+
+    # These are technically false positives in an NLP sense,
+    # but correct behavior for this Regex extractor.
+    assert "Project:management" in entities
+    assert "User:behavior" in entities
+
+
+@pytest.mark.asyncio
+async def test_custom_pattern_capturing_whitespace() -> None:
+    """Test that the extractor strips whitespace from captured groups."""
+    # Pattern capturing everything after colon, including potential spaces
+    patterns = [("Title", r"Title:\s*(.*)")]
+    extractor = RegexEntityExtractor(patterns=patterns)
+
+    text = "Title:   The Great Gatsby   "
+
+    entities = await extractor.extract(text)
+
+    # Should be stripped
+    assert "Title:The Great Gatsby" in entities
+
+
+@pytest.mark.asyncio
+async def test_complex_messy_scenario() -> None:
+    """
+    Test a complex, messy input simulating a raw email or log dump.
+    Mixes multiple entity types, noise, and formatting.
+    """
+    extractor = RegexEntityExtractor()
+    text = """
+    From: User:admin
+    Date: 2024-01-01
+    Subject: Re: Project Alpha-One Update
+
+    Hi Team,
+
+    regarding Project:Alpha-One (and Project Beta), we need to consult
+    Dept:Legal and Dept:Compliance immediately.
+
+    Client:MegaCorp is waiting.
+
+    Also, User:John_Doe mentioned Drug:Aspirin side effects.
+
+    Thanks.
+    """
+
+    entities = await extractor.extract(text)
+
+    expected = {
+        "User:admin",
+        "Project:Alpha-One",
+        # "Project Beta" might be missed if it doesn't have a colon and text has ) immediately?
+        # Pattern: r"(?i)\bProject[:\s]+([\w-]+)"
+        # "Project Beta)" -> "Beta" matches \w. ")" stops it. So "Project:Beta"
+        "Project:Beta",
+        "Dept:Legal",
+        "Dept:Compliance",
+        "Client:MegaCorp",
+        "User:John_Doe",
+        "Drug:Aspirin",
+    }
+
+    # Convert list to set for comparison
+    entity_set = set(entities)
+
+    # Check that all expected entities are present
+    assert expected.issubset(entity_set)
+
+    # Note: "Project Alpha-One" is extracted as "Project:Alpha-One" because \w- includes hyphens.
