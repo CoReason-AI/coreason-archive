@@ -2,6 +2,7 @@ import json
 from datetime import datetime
 from pathlib import Path
 from tempfile import TemporaryDirectory
+from unittest.mock import mock_open, patch
 from uuid import uuid4
 
 import numpy as np
@@ -285,32 +286,31 @@ def test_get_by_scope_empty() -> None:
 
 def test_save_error(tmp_path: Path) -> None:
     """Test handling of save errors (e.g., permission denied)."""
-    # Create a read-only directory
-    read_only_dir = tmp_path / "readonly"
-    read_only_dir.mkdir()
-    read_only_dir.chmod(0o444)  # Read-only
-
     store = VectorStore()
     store.add(create_dummy_thought([1.0, 0.0]))
 
-    filepath = read_only_dir / "store.json"
+    filepath = tmp_path / "store.json"
 
-    # Expect IOError/PermissionError
-    with pytest.raises(OSError):
-        store.save(filepath)
+    # Force IOError during open
+    with patch("builtins.open", mock_open()) as mocked_file:
+        mocked_file.side_effect = IOError("Permission denied")
+        with pytest.raises(IOError, match="Permission denied"):
+            store.save(filepath)
 
 
 def test_load_io_error(tmp_path: Path) -> None:
     """Test handling of load errors (e.g., permission denied)."""
-    # Create a file that cannot be read
-    filepath = tmp_path / "noread.json"
+    filepath = tmp_path / "store.json"
+    # Ensure file exists so checks pass
     filepath.touch()
-    filepath.chmod(0o000)  # No permissions
 
     store = VectorStore()
-    # Expect IOError/PermissionError
-    with pytest.raises(OSError):
-        store.load(filepath)
+
+    # Force IOError during open
+    with patch("builtins.open", mock_open()) as mocked_file:
+        mocked_file.side_effect = IOError("Permission denied")
+        with pytest.raises(IOError, match="Permission denied"):
+            store.load(filepath)
 
 
 def test_mixed_dimensions_error() -> None:
