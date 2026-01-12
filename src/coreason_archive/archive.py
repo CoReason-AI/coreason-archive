@@ -199,19 +199,33 @@ class CoreasonArchive:
         scored_results: List[Tuple[CachedThought, float]] = []
 
         # Pre-compute active project entities for boosting
-        # Assuming project IDs in context match "Project:{id}" format loosely?
-        # Or we strictly expect "Project:{id}".
-        # Let's handle generic case: Check if thought.entities overlaps with context-derived entities?
-        # Simpler: If thought is about a Project that is in context.project_ids.
+        # We start with the projects the user is explicitly part of.
         active_projects = {f"Project:{pid}" for pid in context.project_ids}
+
+        # Expand active_projects with 1-hop neighbors from GraphStore.
+        # This implements the Neuro-Symbolic "Graph Traversal" boosting.
+        # We want to boost thoughts that are LINKED to the active project, even if
+        # they don't explicitly contain the Project entity itself.
+        # E.g. Thought(Entity:A) --[RELATED]--> Project:Apollo
+        boost_entities = set(active_projects)
+
+        for project_entity in active_projects:
+            # We check "both" directions because the relationship could be defined as:
+            # 1. Project -> RELATED -> Entity (Outgoing)
+            # 2. Entity -> BELONGS_TO -> Project (Incoming)
+            neighbors = self.graph_store.get_related_entities(project_entity, direction="both")
+            for neighbor, _relation in neighbors:
+                boost_entities.add(neighbor)
+
+        if len(boost_entities) > len(active_projects):
+            logger.debug(f"Expanded boost entities from {len(active_projects)} to {len(boost_entities)}")
 
         for thought, base_score in filtered_candidates:
             current_score = base_score
 
             # Apply Graph Boost
-            # Boost if the thought contains entities related to active context
-            # Intersection of thought.entities and active_projects
-            if thought.entities and not active_projects.isdisjoint(thought.entities):
+            # Boost if the thought contains entities related to active context (direct or 1-hop)
+            if thought.entities and not boost_entities.isdisjoint(thought.entities):
                 current_score *= graph_boost_factor
                 logger.debug(f"Boosted thought {thought.id} (Graph Link)")
 
