@@ -30,7 +30,15 @@ class VectorStore:
 
         Args:
             thought: The thought object to store.
+
+        Raises:
+            ValueError: If the vector dimension does not match existing vectors.
         """
+        if self._vectors:
+            expected_dim = len(self._vectors[0])
+            if len(thought.vector) != expected_dim:
+                raise ValueError(f"Vector dimension mismatch: expected {expected_dim}, got {len(thought.vector)}")
+
         self.thoughts.append(thought)
         self._vectors.append(thought.vector)
         logger.debug(f"Added thought {thought.id} to VectorStore.")

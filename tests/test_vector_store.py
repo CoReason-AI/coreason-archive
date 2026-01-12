@@ -311,3 +311,77 @@ def test_load_io_error(tmp_path: Path) -> None:
     # Expect IOError/PermissionError
     with pytest.raises(OSError):
         store.load(filepath)
+
+
+def test_mixed_dimensions_error() -> None:
+    """Test that adding vectors of different dimensions raises ValueError."""
+    store = VectorStore()
+    store.add(create_dummy_thought([1.0, 0.0]))  # Dim 2
+
+    # Try adding Dim 3
+    with pytest.raises(ValueError, match="Vector dimension mismatch"):
+        store.add(create_dummy_thought([1.0, 0.0, 0.0]))
+
+
+def test_relocation_scenario() -> None:
+    """
+    Simulate a relocation scenario:
+    1. Find all thoughts for a specific scope (e.g., old department).
+    2. Delete them.
+    3. Verify they are gone and others remain.
+    """
+    store = VectorStore()
+
+    # User's personal thoughts (keep)
+    t1 = create_dummy_thought([1.0], scope=MemoryScope.USER)
+    t1.scope_id = "user_1"
+    store.add(t1)
+
+    # Old department thoughts (delete)
+    t2 = create_dummy_thought([1.0], scope=MemoryScope.DEPARTMENT)
+    t2.scope_id = "dept_old"
+    store.add(t2)
+
+    t3 = create_dummy_thought([1.0], scope=MemoryScope.DEPARTMENT)
+    t3.scope_id = "dept_old"
+    store.add(t3)
+
+    # New department thoughts (keep/ignore)
+    t4 = create_dummy_thought([1.0], scope=MemoryScope.DEPARTMENT)
+    t4.scope_id = "dept_new"
+    store.add(t4)
+
+    # Step 1: Find old dept thoughts
+    to_delete = store.get_by_scope(MemoryScope.DEPARTMENT, "dept_old")
+    assert len(to_delete) == 2
+
+    # Step 2: Delete them
+    for t in to_delete:
+        store.delete(t.id)
+
+    # Step 3: Verify
+    remaining = store.thoughts
+    assert len(remaining) == 2
+    ids = {t.id for t in remaining}
+    assert t1.id in ids
+    assert t4.id in ids
+    assert t2.id not in ids
+    assert t3.id not in ids
+
+    # Verify vector consistency
+    assert len(store._vectors) == 2
+
+
+def test_search_limit_edge_cases() -> None:
+    """Test search with limit 0 and limit > total."""
+    store = VectorStore()
+    store.add(create_dummy_thought([1.0]))
+    store.add(create_dummy_thought([0.5]))
+
+    # Limit 0
+    results_zero = store.search([1.0], limit=0)
+    assert len(results_zero) == 0
+
+    # Limit > total
+    results_all = store.search([1.0], limit=100)
+    assert len(results_all) == 2
