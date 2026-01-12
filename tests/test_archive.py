@@ -1,3 +1,4 @@
+import asyncio
 from typing import List
 from unittest.mock import AsyncMock, Mock
 
@@ -40,6 +41,10 @@ async def test_add_thought_flow() -> None:
         scope_id="user_123",
         user_id="user_123",
     )
+
+    # Wait for background processing
+    if archive._background_tasks:
+        await asyncio.gather(*archive._background_tasks)
 
     # Verify Vector Store
     assert len(v_store.thoughts) == 1

@@ -97,7 +97,7 @@ async def test_complex_drug_example() -> None:
 
 @pytest.mark.asyncio
 async def test_unicode_entities() -> None:
-    """
+    r"""
     Test extraction of non-ASCII entities.
     Python's \w matches Unicode alphanumeric characters.
     """
