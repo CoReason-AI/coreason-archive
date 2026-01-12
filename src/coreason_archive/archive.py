@@ -162,7 +162,7 @@ class CoreasonArchive:
         limit: int = 10,
         min_score: float = 0.0,
         graph_boost_factor: float = 1.1,
-    ) -> List[Tuple[CachedThought, float]]:
+    ) -> List[Tuple[CachedThought, float, dict[str, Any]]]:
         """
         Retrieves thoughts using the Scope-Link-Rank-Retrieve Loop.
         1. Vector Search (Semantic)
@@ -178,7 +178,7 @@ class CoreasonArchive:
             graph_boost_factor: Multiplier for score if structurally linked.
 
         Returns:
-            List of (CachedThought, final_score) tuples, sorted by score.
+            List of (CachedThought, final_score, metadata) tuples, sorted by score.
         """
         # 1. Vector Search
         query_vector = self.embedder.embed(query)
@@ -196,7 +196,7 @@ class CoreasonArchive:
                 filtered_candidates.append((thought, score))
 
         # 3. Graph Boost & 4. Temporal Decay
-        scored_results: List[Tuple[CachedThought, float]] = []
+        scored_results: List[Tuple[CachedThought, float, dict[str, Any]]] = []
 
         # Pre-compute active project entities for boosting
         # We start with the projects the user is explicitly part of.
@@ -222,17 +222,26 @@ class CoreasonArchive:
 
         for thought, base_score in filtered_candidates:
             current_score = base_score
+            is_boosted = False
 
             # Apply Graph Boost
             # Boost if the thought contains entities related to active context (direct or 1-hop)
             if thought.entities and not boost_entities.isdisjoint(thought.entities):
                 current_score *= graph_boost_factor
+                is_boosted = True
                 logger.debug(f"Boosted thought {thought.id} (Graph Link)")
 
             # Apply Temporal Decay
-            final_score = TemporalRanker.adjust_score(current_score, thought.scope, thought.created_at)
+            decay_factor = TemporalRanker.calculate_decay_factor(thought.scope, thought.created_at)
+            final_score = current_score * decay_factor
 
-            scored_results.append((thought, final_score))
+            metadata = {
+                "base_score": base_score,
+                "is_boosted": is_boosted,
+                "decay_factor": decay_factor,
+            }
+
+            scored_results.append((thought, final_score, metadata))
 
         # Sort by final score
         scored_results.sort(key=lambda x: x[1], reverse=True)
@@ -245,6 +254,7 @@ class CoreasonArchive:
         context: UserContext,
         exact_threshold: float = 0.99,
         hint_threshold: float = 0.85,
+        graph_boost_factor: float = 1.1,
     ) -> SearchResult:
         """
         Orchestrates the "Lookup vs. Compute" decision logic (Matchmaker).
@@ -254,12 +264,13 @@ class CoreasonArchive:
             context: The user context.
             exact_threshold: Score above which we return full content.
             hint_threshold: Score above which we return a hint.
+            graph_boost_factor: Multiplier for score if structurally linked.
 
         Returns:
             A SearchResult object containing the strategy and content.
         """
         # 1. Retrieve candidates
-        results = await self.retrieve(query, context, limit=5, min_score=0.0)
+        results = await self.retrieve(query, context, limit=5, min_score=0.0, graph_boost_factor=graph_boost_factor)
 
         if not results:
             return SearchResult(
@@ -269,7 +280,7 @@ class CoreasonArchive:
                 content={"message": "No relevant memories found."},
             )
 
-        top_thought, top_score = results[0]
+        top_thought, top_score, top_metadata = results[0]
 
         # 2. Decide Strategy
         if top_score >= exact_threshold:
@@ -298,18 +309,21 @@ class CoreasonArchive:
                 },
             )
 
-        else:
-            # Low Score -> Standard Retrieval / Entity Hop
-            # PRD implies "Entity Hop (Graph Search)" if semantic is low?
-            # Or just fall back to standard retrieval of top K?
-            # Since we already boosted via Graph in `retrieve`, the top result IS the best guess.
-            # If it's still low score, it means neither semantic nor graph boosted it enough.
-            # However, PRD says "Entity Hop" finds relevant context that might not be semantically similar.
-            # If Graph Boost worked, it should have pushed a structurally related item up.
-            # So we return the top item(s) as "Standard Retrieval" or "Entity Hop" if it was boosted?
-            # For MVP, let's return the top thoughts as standard context.
+        elif top_metadata.get("is_boosted", False):
+            # Entity Hop: High score driven by Graph Boost
+            return SearchResult(
+                strategy=MatchStrategy.ENTITY_HOP,
+                thought=top_thought,
+                score=top_score,
+                content={
+                    "hint": f"Found structurally related context (Entity Hop). Consider: {top_thought.reasoning_trace}",
+                    "source": "entity_hop",
+                    "reasoning": top_thought.reasoning_trace,
+                },
+            )
 
-            # Construct list of top thoughts
+        else:
+            # Standard Retrieval
             return SearchResult(
                 strategy=MatchStrategy.STANDARD_RETRIEVAL,
                 thought=top_thought,
@@ -321,7 +335,7 @@ class CoreasonArchive:
                             "reasoning": t.reasoning_trace,
                             "score": s,
                         }
-                        for t, s in results
+                        for t, s, _ in results
                     ]
                 },
             )
