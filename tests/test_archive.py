@@ -9,7 +9,7 @@ from coreason_archive.federation import UserContext
 from coreason_archive.graph_store import GraphStore
 from coreason_archive.interfaces import Embedder, EntityExtractor
 from coreason_archive.matchmaker import MatchStrategy
-from coreason_archive.models import MemoryScope
+from coreason_archive.models import GraphEdgeType, MemoryScope
 from coreason_archive.vector_store import VectorStore
 
 
@@ -267,3 +267,22 @@ async def test_smart_lookup_no_results() -> None:
 
     assert result.strategy == MatchStrategy.STANDARD_RETRIEVAL
     assert result.content["message"] == "No relevant memories found."
+
+
+@pytest.mark.asyncio
+async def test_define_entity_relationship() -> None:
+    """Test explicitly defining entity relationships for hierarchy."""
+    v_store = VectorStore()
+    g_store = GraphStore()
+    embedder = MockEmbedder()
+    archive = CoreasonArchive(v_store, g_store, embedder)
+
+    # Define a hierarchy link
+    archive.define_entity_relationship(
+        source="Project:Apollo", target="Department:RnD", relation=GraphEdgeType.BELONGS_TO
+    )
+
+    # Verify in GraphStore
+    related = g_store.get_related_entities("Project:Apollo", GraphEdgeType.BELONGS_TO, direction="outgoing")
+    assert len(related) == 1
+    assert related[0][0] == "Department:RnD"

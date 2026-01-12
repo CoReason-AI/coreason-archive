@@ -42,6 +42,24 @@ class CoreasonArchive:
         self.temporal_ranker = TemporalRanker()
         self._background_tasks: Set[asyncio.Task[Any]] = set()
 
+    def define_entity_relationship(
+        self,
+        source: str,
+        target: str,
+        relation: GraphEdgeType,
+    ) -> None:
+        """
+        Defines a structural relationship between two entities in the GraphStore.
+        Useful for ingesting organizational hierarchy (e.g., Project:Apollo -> BELONGS_TO -> Department:RnD).
+
+        Args:
+            source: The source entity string (e.g. "Project:Apollo").
+            target: The target entity string (e.g. "Department:RnD").
+            relation: The type of relationship.
+        """
+        self.graph_store.add_relationship(source, target, relation)
+        logger.info(f"Defined relationship: {source} -[{relation.value}]-> {target}")
+
     async def add_thought(
         self,
         prompt: str,
