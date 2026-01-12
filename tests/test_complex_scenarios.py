@@ -114,8 +114,8 @@ async def test_full_hybrid_loop() -> None:
     results = await archive.retrieve("query", context, limit=10, graph_boost_factor=1.5)
 
     # Analysis
-    ids = [t.id for t, s in results]
-    scores = {t.id: s for t, s in results}
+    ids = [t.id for t, s, _ in results]
+    scores = {t.id: s for t, s, _ in results}
 
     # 1. C should be gone
     assert t_c.id not in ids

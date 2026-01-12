@@ -57,7 +57,7 @@ async def test_boosting_bidirectional_links(archive_setup: Tuple[CoreasonArchive
 
     results = await archive.retrieve("q", context, limit=10, graph_boost_factor=2.0)
 
-    scores = {r[0].id: r[1] for r in results}
+    scores = {r.id: s for r, s, _ in results}
 
     # T1 and T2 should be boosted (~2.0 * decay), T3 should be base (~1.0 * decay)
     # Since created_at is identical (ms diff), decay is negligible.
@@ -95,7 +95,7 @@ async def test_boosting_multiple_active_projects(
     context = UserContext(user_id="u1", project_ids=["A", "B"])
 
     results = await archive.retrieve("q", context, graph_boost_factor=2.0)
-    scores = {r[0].id: r[1] for r in results}
+    scores = {r.id: s for r, s, _ in results}
 
     assert scores[t_a.id] > scores[t_none.id] * 1.5
     assert scores[t_b.id] > scores[t_none.id] * 1.5
@@ -124,7 +124,7 @@ async def test_no_boost_disconnected(archive_setup: Tuple[CoreasonArchive, Vecto
     context = UserContext(user_id="u1", project_ids=["A"])
 
     results = await archive.retrieve("q", context, graph_boost_factor=2.0)
-    scores = {r[0].id: r[1] for r in results}
+    scores = {r.id: s for r, s, _ in results}
 
     # Scores should be identical (roughly) as neither is boosted
     assert abs(scores[t1.id] - scores[t2.id]) < 0.001
@@ -149,7 +149,7 @@ async def test_boost_factor_control(archive_setup: Tuple[CoreasonArchive, Vector
 
     # Factor 1.0 -> No boost
     results = await archive.retrieve("q", context, graph_boost_factor=1.0)
-    scores = {r[0].id: r[1] for r in results}
+    scores = {r.id: s for r, s, _ in results}
 
     # Scores should be effectively equal
     assert abs(scores[t1.id] - scores[t2.id]) < 0.001

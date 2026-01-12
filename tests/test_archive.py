@@ -169,7 +169,7 @@ async def test_retrieve_flow() -> None:
     # t1 and t4 are recent USER thoughts.
 
     # Verify t2 is gone
-    ids = [t.id for t, s in results]
+    ids = [t.id for t, s, _ in results]
     assert t2.id not in ids
 
     # Verify t3 is top ranked (boosted)
