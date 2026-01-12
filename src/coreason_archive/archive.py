@@ -254,6 +254,7 @@ class CoreasonArchive:
         context: UserContext,
         exact_threshold: float = 0.99,
         hint_threshold: float = 0.85,
+        graph_boost_factor: float = 1.1,
     ) -> SearchResult:
         """
         Orchestrates the "Lookup vs. Compute" decision logic (Matchmaker).
@@ -263,12 +264,13 @@ class CoreasonArchive:
             context: The user context.
             exact_threshold: Score above which we return full content.
             hint_threshold: Score above which we return a hint.
+            graph_boost_factor: Multiplier for score if structurally linked.
 
         Returns:
             A SearchResult object containing the strategy and content.
         """
         # 1. Retrieve candidates
-        results = await self.retrieve(query, context, limit=5, min_score=0.0)
+        results = await self.retrieve(query, context, limit=5, min_score=0.0, graph_boost_factor=graph_boost_factor)
 
         if not results:
             return SearchResult(

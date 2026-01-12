@@ -217,3 +217,85 @@ async def test_future_date_decay() -> None:
     assert len(results) == 1
     # decay factor should be 1.0 (clamped)
     assert results[0][1] == pytest.approx(1.0, abs=1e-5)
+
+
+@pytest.mark.asyncio
+async def test_smart_lookup_reordering_scenario() -> None:
+    """
+    Complex Scenario for Matchmaker:
+    Thought A: High Vector (0.8), No Boost.
+    Thought B: Med Vector (0.6), High Boost (1.5x -> 0.9).
+
+    Result should be:
+    1. B wins ranking.
+    2. B triggers SEMANTIC_HINT (if > 0.85) or ENTITY_HOP (if < 0.85).
+
+    Case 1: B becomes 0.9 (> 0.85). Should return SEMANTIC_HINT.
+    """
+
+    # Vectors
+    vec_q = [1.0] + [0.0] * 1535
+    vec_a = [0.8, 0.6] + [0.0] * 1534  # Sim 0.8
+    vec_b = [0.6, 0.8] + [0.0] * 1534  # Sim 0.6
+
+    embedder = DictMockEmbedder({"q": vec_q})
+    store = VectorStore()
+    archive = CoreasonArchive(store, GraphStore(), embedder)
+
+    now = datetime.now(timezone.utc)
+
+    # Thought A (0.8, No boost)
+    t_a = create_thought("A", vec_a, MemoryScope.USER, "u1", now)
+    store.add(t_a)
+
+    # Thought B (0.6, Boosted)
+    t_b = create_thought("B", vec_b, MemoryScope.PROJECT, "Apollo", now, entities=["Project:Apollo"])
+    store.add(t_b)
+
+    context = UserContext(user_id="u1", project_ids=["Apollo"])
+
+    # Boost factor 1.5. B becomes 0.9. A stays 0.8.
+    # Hint threshold 0.85.
+
+    result = await archive.smart_lookup("q", context, hint_threshold=0.85, graph_boost_factor=1.5)
+
+    assert result.thought is not None
+    assert result.thought.id == t_b.id
+    assert result.strategy == MatchStrategy.SEMANTIC_HINT
+
+    # Case 2: Lower boost.
+    # B becomes 0.6 * 1.3 = 0.78.
+    # A is 0.8.
+    # A wins. A is not boosted. A < Hint (0.85).
+    # Result: STANDARD_RETRIEVAL (with top thought A).
+
+    result2 = await archive.smart_lookup("q", context, hint_threshold=0.85, graph_boost_factor=1.3)
+
+    assert result2.thought is not None
+    assert result2.thought.id == t_a.id
+    assert result2.strategy == MatchStrategy.STANDARD_RETRIEVAL
+
+    # Case 3: B wins but < Hint.
+    # A = 0.6. B = 0.5.
+    # Boost 1.5. B -> 0.75.
+    # B > A. B < Hint (0.85).
+    # Result: ENTITY_HOP.
+
+    # Need new thoughts/vectors for Case 3
+    vec_a2 = [0.6, 0.8] + [0.0] * 1534
+    vec_b2 = [0.5, 0.866] + [0.0] * 1534
+
+    # Re-init store or just clear
+    store.thoughts = []
+    store._vectors = []
+
+    t_a2 = create_thought("A2", vec_a2, MemoryScope.USER, "u1", now)
+    t_b2 = create_thought("B2", vec_b2, MemoryScope.PROJECT, "Apollo", now, entities=["Project:Apollo"])
+    store.add(t_a2)
+    store.add(t_b2)
+
+    result3 = await archive.smart_lookup("q", context, hint_threshold=0.85, graph_boost_factor=1.5)
+
+    assert result3.thought is not None
+    assert result3.thought.id == t_b2.id
+    assert result3.strategy == MatchStrategy.ENTITY_HOP
