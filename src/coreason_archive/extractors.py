@@ -12,7 +12,7 @@ class RegexEntityExtractor(EntityExtractor):
     """
 
     def __init__(self, patterns: List[Tuple[str, str]] | None = None) -> None:
-        """
+        r"""
         Initialize the extractor with a list of (Entity Type, Regex Pattern) tuples.
 
         Args:
