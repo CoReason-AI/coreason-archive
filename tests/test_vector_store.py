@@ -281,3 +281,33 @@ def test_get_by_scope_empty() -> None:
     """Test retrieving thoughts by scope when none match."""
     store = VectorStore()
     assert store.get_by_scope(MemoryScope.USER, "unknown") == []
+
+
+def test_save_error(tmp_path: Path) -> None:
+    """Test handling of save errors (e.g., permission denied)."""
+    # Create a read-only directory
+    read_only_dir = tmp_path / "readonly"
+    read_only_dir.mkdir()
+    read_only_dir.chmod(0o444)  # Read-only
+
+    store = VectorStore()
+    store.add(create_dummy_thought([1.0, 0.0]))
+
+    filepath = read_only_dir / "store.json"
+
+    # Expect IOError/PermissionError
+    with pytest.raises(OSError):
+        store.save(filepath)
+
+
+def test_load_io_error(tmp_path: Path) -> None:
+    """Test handling of load errors (e.g., permission denied)."""
+    # Create a file that cannot be read
+    filepath = tmp_path / "noread.json"
+    filepath.touch()
+    filepath.chmod(0o000)  # No permissions
+
+    store = VectorStore()
+    # Expect IOError/PermissionError
+    with pytest.raises(OSError):
+        store.load(filepath)

@@ -136,16 +136,21 @@ class VectorStore:
 
         Args:
             filepath: Path to the output JSON file.
+
+        Raises:
+            IOError: If writing to the file fails.
         """
-        # Serialize list of models
-        # Pydantic 2 syntax for list serialization: TypeAdapter or manual list
-        # Simple manual list dump
-        data = [json.loads(t.model_dump_json()) for t in self.thoughts]
+        try:
+            # Serialize list of models
+            data = [json.loads(t.model_dump_json()) for t in self.thoughts]
 
-        with open(filepath, "w", encoding="utf-8") as f:
-            json.dump(data, f, indent=2)
+            with open(filepath, "w", encoding="utf-8") as f:
+                json.dump(data, f, indent=2)
 
-        logger.info(f"VectorStore saved {len(self.thoughts)} thoughts to {filepath}")
+            logger.info(f"VectorStore saved {len(self.thoughts)} thoughts to {filepath}")
+        except IOError as e:
+            logger.error(f"Failed to save VectorStore to {filepath}: {e}")
+            raise
 
     def load(self, filepath: Path) -> None:
         """
@@ -153,16 +158,24 @@ class VectorStore:
 
         Args:
             filepath: Path to the JSON file.
+
+        Raises:
+            IOError: If reading the file fails.
+            json.JSONDecodeError: If the file content is invalid JSON.
         """
         if not filepath.exists():
             logger.warning(f"VectorStore file {filepath} not found. Starting empty.")
             return
 
-        with open(filepath, "r", encoding="utf-8") as f:
-            data = json.load(f)
+        try:
+            with open(filepath, "r", encoding="utf-8") as f:
+                data = json.load(f)
 
-        self.thoughts = [CachedThought.model_validate(item) for item in data]
-        # Rebuild vector cache
-        self._vectors = [t.vector for t in self.thoughts]
+            self.thoughts = [CachedThought.model_validate(item) for item in data]
+            # Rebuild vector cache
+            self._vectors = [t.vector for t in self.thoughts]
 
-        logger.info(f"VectorStore loaded {len(self.thoughts)} thoughts from {filepath}")
+            logger.info(f"VectorStore loaded {len(self.thoughts)} thoughts from {filepath}")
+        except (IOError, json.JSONDecodeError) as e:
+            logger.error(f"Failed to load VectorStore from {filepath}: {e}")
+            raise
