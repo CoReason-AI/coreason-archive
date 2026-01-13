@@ -233,6 +233,18 @@ class CoreasonArchive:
         # E.g. Thought(Entity:A) --[RELATED]--> Project:Apollo
         boost_entities = set(active_projects)
 
+        # Extract entities from the query itself to support "Entity Hop"
+        # If the query mentions "Drug:Z", we want to boost thoughts linked to "Drug:Z"
+        if self.entity_extractor:
+            try:
+                query_entities = await self.entity_extractor.extract(query)
+                if query_entities:
+                    logger.debug(f"Extracted entities from query: {query_entities}")
+                    boost_entities.update(query_entities)
+            except Exception as e:
+                # We log warning but do not fail the retrieval if extraction fails
+                logger.warning(f"Failed to extract entities from query: {e}")
+
         for project_entity in active_projects:
             # We check "both" directions because the relationship could be defined as:
             # 1. Project -> RELATED -> Entity (Outgoing)
