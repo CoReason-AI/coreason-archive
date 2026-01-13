@@ -80,6 +80,27 @@ class VectorStore:
         """
         return [t for t in self.thoughts if t.scope == scope and t.scope_id == scope_id]
 
+    def mark_stale_by_urn(self, urn: str) -> int:
+        """
+        Marks thoughts as stale if they are linked to the given source URN.
+
+        Args:
+            urn: The Uniform Resource Name of the source document.
+
+        Returns:
+            The count of thoughts marked as stale.
+        """
+        count = 0
+        for thought in self.thoughts:
+            if urn in thought.source_urns and not thought.is_stale:
+                thought.is_stale = True
+                count += 1
+
+        if count > 0:
+            logger.info(f"Marked {count} thoughts as stale for URN: {urn}")
+
+        return count
+
     def search(
         self, query_vector: List[float], limit: int = 10, min_score: float = 0.0
     ) -> List[Tuple[CachedThought, float]]:

@@ -41,6 +41,7 @@ class CachedThought(BaseModel):
 
     # Metadata
     source_urns: List[str] = Field(..., description="Links to source documents in MCP")
+    is_stale: bool = Field(default=False, description="Flag indicating if the source information is outdated")
     created_at: datetime = Field(..., description="Timestamp of creation")
     ttl_seconds: int = Field(..., description="Time-to-live in seconds for decay calculation")
     access_roles: List[str] = Field(..., description="RBAC claims required to access this thought")
