@@ -1,13 +1,16 @@
-import pytest
-from uuid import uuid4
 from datetime import datetime, timezone
+from unittest.mock import MagicMock
+from uuid import uuid4
+
+import pytest
+
+from coreason_archive.archive import CoreasonArchive
 from coreason_archive.models import CachedThought, MemoryScope
 from coreason_archive.vector_store import VectorStore
-from coreason_archive.archive import CoreasonArchive
-from unittest.mock import MagicMock
+
 
 @pytest.fixture
-def sample_thought():
+def sample_thought() -> CachedThought:
     return CachedThought(
         id=uuid4(),
         vector=[0.1] * 1536,
@@ -21,10 +24,11 @@ def sample_thought():
         created_at=datetime.now(timezone.utc),
         ttl_seconds=3600,
         access_roles=[],
-        is_stale=False
+        is_stale=False,
     )
 
-def test_thought_defaults_not_stale():
+
+def test_thought_defaults_not_stale() -> None:
     """Test that a new thought is not stale by default."""
     thought = CachedThought(
         id=uuid4(),
@@ -38,11 +42,12 @@ def test_thought_defaults_not_stale():
         source_urns=[],
         created_at=datetime.now(timezone.utc),
         ttl_seconds=3600,
-        access_roles=[]
+        access_roles=[],
     )
     assert thought.is_stale is False
 
-def test_vector_store_mark_stale(sample_thought):
+
+def test_vector_store_mark_stale(sample_thought: CachedThought) -> None:
     """Test VectorStore.mark_stale_by_urn functionality."""
     store = VectorStore()
 
@@ -62,10 +67,11 @@ def test_vector_store_mark_stale(sample_thought):
 
     assert count == 2
     assert store.thoughts[0].is_stale is True  # thought1
-    assert store.thoughts[1].is_stale is False # thought2
+    assert store.thoughts[1].is_stale is False  # thought2
     assert store.thoughts[2].is_stale is True  # thought3
 
-def test_mark_stale_idempotent(sample_thought):
+
+def test_mark_stale_idempotent(sample_thought: CachedThought) -> None:
     """Test that marking stale is idempotent."""
     store = VectorStore()
     store.add(sample_thought)
@@ -80,17 +86,14 @@ def test_mark_stale_idempotent(sample_thought):
     assert count2 == 0  # Should be 0 since it's already stale
     assert store.thoughts[0].is_stale is True
 
-def test_archive_invalidate_source():
+
+def test_archive_invalidate_source() -> None:
     """Test CoreasonArchive.invalidate_source delegation."""
     mock_vector_store = MagicMock(spec=VectorStore)
     mock_graph_store = MagicMock()
     mock_embedder = MagicMock()
 
-    archive = CoreasonArchive(
-        vector_store=mock_vector_store,
-        graph_store=mock_graph_store,
-        embedder=mock_embedder
-    )
+    archive = CoreasonArchive(vector_store=mock_vector_store, graph_store=mock_graph_store, embedder=mock_embedder)
 
     mock_vector_store.mark_stale_by_urn.return_value = 5
 

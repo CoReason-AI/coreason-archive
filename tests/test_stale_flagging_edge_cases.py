@@ -1,14 +1,17 @@
-import pytest
-from uuid import uuid4
 from datetime import datetime, timezone
-from coreason_archive.models import CachedThought, MemoryScope
-from coreason_archive.archive import CoreasonArchive
-from coreason_archive.vector_store import VectorStore
-from coreason_archive.federation import UserContext
 from unittest.mock import MagicMock
+from uuid import uuid4
+
+import pytest
+
+from coreason_archive.archive import CoreasonArchive
+from coreason_archive.federation import UserContext
+from coreason_archive.models import CachedThought, MemoryScope
+from coreason_archive.vector_store import VectorStore
+
 
 @pytest.fixture
-def base_thought():
+def base_thought() -> CachedThought:
     return CachedThought(
         id=uuid4(),
         vector=[0.1] * 1536,
@@ -22,10 +25,11 @@ def base_thought():
         created_at=datetime.now(timezone.utc),
         ttl_seconds=3600,
         access_roles=[],
-        is_stale=False
+        is_stale=False,
     )
 
-def test_urn_substring_no_match(base_thought):
+
+def test_urn_substring_no_match(base_thought: CachedThought) -> None:
     """
     Edge Case: Ensure partial URN matches do not trigger the stale flag.
     'urn:123' should not match 'urn:1234'.
@@ -39,7 +43,8 @@ def test_urn_substring_no_match(base_thought):
     assert count == 0
     assert store.thoughts[0].is_stale is False
 
-def test_urn_case_sensitivity(base_thought):
+
+def test_urn_case_sensitivity(base_thought: CachedThought) -> None:
     """
     Edge Case: Ensure URN matching is strict/case-sensitive.
     'urn:ABC' should not match 'urn:abc'.
@@ -53,7 +58,8 @@ def test_urn_case_sensitivity(base_thought):
     assert count == 0
     assert store.thoughts[0].is_stale is False
 
-def test_multiple_urns_interaction(base_thought):
+
+def test_multiple_urns_interaction(base_thought: CachedThought) -> None:
     """
     Edge Case: Thoughts with multiple source URNs.
     If one source is invalid, the thought is stale.
@@ -75,8 +81,9 @@ def test_multiple_urns_interaction(base_thought):
     assert count_b == 0
     assert store.thoughts[0].is_stale is True
 
+
 @pytest.mark.asyncio
-async def test_complex_retrieval_flow(base_thought):
+async def test_complex_retrieval_flow(base_thought: CachedThought) -> None:
     """
     Complex Scenario: Add thoughts -> Retrieve (fresh) -> Invalidate -> Retrieve (stale).
     Verifies that the stale state propagates to search results.
@@ -85,18 +92,13 @@ async def test_complex_retrieval_flow(base_thought):
     store = VectorStore()
     graph = MagicMock()
     embedder = MagicMock()
-    embedder.embed.return_value = [0.1] * 1536 # Mock embedding
+    embedder.embed.return_value = [0.1] * 1536  # Mock embedding
 
     archive = CoreasonArchive(vector_store=store, graph_store=graph, embedder=embedder)
 
     # Add thoughts
     t1 = await archive.add_thought(
-        prompt="foo",
-        response="bar",
-        scope=MemoryScope.USER,
-        scope_id="u1",
-        user_id="u1",
-        source_urns=["urn:doc:1"]
+        prompt="foo", response="bar", scope=MemoryScope.USER, scope_id="u1", user_id="u1", source_urns=["urn:doc:1"]
     )
 
     context = UserContext(user_id="u1", roles=[])
@@ -116,7 +118,8 @@ async def test_complex_retrieval_flow(base_thought):
     assert results_stale[0][0].id == t1.id
     assert results_stale[0][0].is_stale is True
 
-def test_invalidation_performance_simulation(base_thought):
+
+def test_invalidation_performance_simulation(base_thought: CachedThought) -> None:
     """
     Complex Scenario: Batch operation simulation.
     Store has mixed thoughts, only linked ones should be touched.
