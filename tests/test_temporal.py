@@ -12,12 +12,18 @@ def test_decay_calculation_basic() -> None:
 
     # 1 day ago
     delta_seconds = 86400
-    created_at = datetime.now(timezone.utc) - timedelta(seconds=delta_seconds)
+    now = datetime.now(timezone.utc)
+    created_at = now - timedelta(seconds=delta_seconds)
+
+    # Re-calculate delta based on actual 'now' usage inside function is not possible without mocking.
+    # The function calls datetime.now(timezone.utc) internally.
+    # So there is a slight time drift between our `now` and the function's `now`.
+    # We relax the tolerance to account for execution time.
 
     expected_decay = math.exp(-decay_rate * delta_seconds)
     actual_decay = TemporalRanker.calculate_decay_factor(scope, created_at)
 
-    assert math.isclose(actual_decay, expected_decay, rel_tol=1e-9)
+    assert math.isclose(actual_decay, expected_decay, rel_tol=1e-5)
 
 
 def test_scope_differences() -> None:

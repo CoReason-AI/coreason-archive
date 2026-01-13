@@ -60,6 +60,22 @@ class CoreasonArchive:
         self.graph_store.add_relationship(source, target, relation)
         logger.info(f"Defined relationship: {source} -[{relation.value}]-> {target}")
 
+    def invalidate_source(self, urn: str) -> int:
+        """
+        Flags all thoughts linked to the given source URN as stale.
+        This handles the integration requirement where updated source documents
+        must trigger a stale flag in the archive.
+
+        Args:
+            urn: The Uniform Resource Name of the updated source document.
+
+        Returns:
+            The number of thoughts flagged as stale.
+        """
+        count = self.vector_store.mark_stale_by_urn(urn)
+        logger.info(f"Invalidated source {urn}, affecting {count} thoughts.")
+        return count
+
     async def add_thought(
         self,
         prompt: str,
