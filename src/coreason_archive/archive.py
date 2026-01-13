@@ -5,11 +5,12 @@ from uuid import uuid4
 
 from coreason_archive.federation import FederationBroker, UserContext
 from coreason_archive.graph_store import GraphStore
-from coreason_archive.interfaces import Embedder, EntityExtractor
+from coreason_archive.interfaces import Embedder, EntityExtractor, TaskRunner
 from coreason_archive.matchmaker import MatchStrategy, SearchResult
 from coreason_archive.models import CachedThought, GraphEdgeType, MemoryScope
 from coreason_archive.temporal import TemporalRanker
 from coreason_archive.utils.logger import logger
+from coreason_archive.utils.runners import AsyncIOTaskRunner
 from coreason_archive.vector_store import VectorStore
 
 
@@ -25,6 +26,7 @@ class CoreasonArchive:
         graph_store: GraphStore,
         embedder: Embedder,
         entity_extractor: Optional[EntityExtractor] = None,
+        task_runner: Optional[TaskRunner] = None,
     ) -> None:
         """
         Initialize the CoreasonArchive.
@@ -34,13 +36,21 @@ class CoreasonArchive:
             graph_store: The graph storage engine.
             embedder: Service to generate embeddings.
             entity_extractor: Service to extract entities (optional).
+            task_runner: Optional custom task runner. Defaults to AsyncIOTaskRunner.
         """
         self.vector_store = vector_store
         self.graph_store = graph_store
         self.embedder = embedder
         self.entity_extractor = entity_extractor
         self.temporal_ranker = TemporalRanker()
+        self.task_runner = task_runner or AsyncIOTaskRunner()
+        # Deprecated: _background_tasks is now managed by the default runner or custom runner
+        # We keep it for backward compatibility if any test accesses it directly,
+        # but internal logic uses task_runner.
         self._background_tasks: Set[asyncio.Task[Any]] = set()
+        # If using default runner, expose its set for tests that inspect it
+        if isinstance(self.task_runner, AsyncIOTaskRunner):
+            self._background_tasks = self.task_runner._background_tasks
 
     def define_entity_relationship(
         self,
@@ -132,9 +142,7 @@ class CoreasonArchive:
 
         # 4. Background Extraction
         if self.entity_extractor:
-            task = asyncio.create_task(self.process_entities(thought, combined_text))
-            self._background_tasks.add(task)
-            task.add_done_callback(self._background_tasks.discard)
+            self.task_runner.run(self.process_entities(thought, combined_text))
 
         return thought
 

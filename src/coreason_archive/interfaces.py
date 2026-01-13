@@ -1,4 +1,4 @@
-from typing import List, Protocol, runtime_checkable
+from typing import Any, Coroutine, List, Protocol, runtime_checkable
 
 
 @runtime_checkable
@@ -35,5 +35,22 @@ class EntityExtractor(Protocol):
 
         Returns:
             A list of entity strings in 'Type:Value' format.
+        """
+        ...
+
+
+@runtime_checkable
+class TaskRunner(Protocol):
+    """
+    Protocol for executing background tasks.
+    Allows decoupling the archive from specific execution environments (e.g., asyncio, FastAPI).
+    """
+
+    def run(self, coro: Coroutine[Any, Any, Any]) -> None:
+        """
+        Schedules a coroutine for execution in the background.
+
+        Args:
+            coro: The coroutine to execute.
         """
         ...
