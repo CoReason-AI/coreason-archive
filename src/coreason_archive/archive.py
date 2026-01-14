@@ -255,16 +255,19 @@ class CoreasonArchive:
                 # We log warning but do not fail the retrieval if extraction fails
                 logger.warning(f"Failed to extract entities from query: {e}")
 
-        for project_entity in active_projects:
+        # Expand ALL seed entities (Active Projects + Query Entities) with 1-hop neighbors
+        # We iterate over a copy of the set because we will modify boost_entities
+        seed_entities = list(boost_entities)
+        for seed_entity in seed_entities:
             # We check "both" directions because the relationship could be defined as:
-            # 1. Project -> RELATED -> Entity (Outgoing)
-            # 2. Entity -> BELONGS_TO -> Project (Incoming)
-            neighbors = self.graph_store.get_related_entities(project_entity, direction="both")
+            # 1. Seed -> RELATED -> Entity (Outgoing)
+            # 2. Entity -> BELONGS_TO -> Seed (Incoming)
+            neighbors = self.graph_store.get_related_entities(seed_entity, direction="both")
             for neighbor, _relation in neighbors:
                 boost_entities.add(neighbor)
 
-        if len(boost_entities) > len(active_projects):
-            logger.debug(f"Expanded boost entities from {len(active_projects)} to {len(boost_entities)}")
+        if len(boost_entities) > len(seed_entities):
+            logger.debug(f"Expanded boost entities from {len(seed_entities)} to {len(boost_entities)}")
 
         for thought, base_score in filtered_candidates:
             current_score = base_score
