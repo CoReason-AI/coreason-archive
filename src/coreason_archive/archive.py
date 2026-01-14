@@ -1,3 +1,13 @@
+# Copyright (c) 2025 CoReason, Inc.
+#
+# This software is proprietary and dual-licensed.
+# Licensed under the Prosperity Public License 3.0 (the "License").
+# A copy of the license is available at https://prosperitylicense.com/versions/3.0.0
+# For details, see the LICENSE file.
+# Commercial use beyond a 30-day trial requires a separate license.
+#
+# Source Code: https://github.com/CoReason-AI/coreason_archive
+
 import asyncio
 from datetime import datetime, timezone
 from typing import Any, List, Optional, Set, Tuple
@@ -232,6 +242,18 @@ class CoreasonArchive:
         # they don't explicitly contain the Project entity itself.
         # E.g. Thought(Entity:A) --[RELATED]--> Project:Apollo
         boost_entities = set(active_projects)
+
+        # Extract entities from the query itself to support "Entity Hop"
+        # If the query mentions "Drug:Z", we want to boost thoughts linked to "Drug:Z"
+        if self.entity_extractor:
+            try:
+                query_entities = await self.entity_extractor.extract(query)
+                if query_entities:
+                    logger.debug(f"Extracted entities from query: {query_entities}")
+                    boost_entities.update(query_entities)
+            except Exception as e:
+                # We log warning but do not fail the retrieval if extraction fails
+                logger.warning(f"Failed to extract entities from query: {e}")
 
         for project_entity in active_projects:
             # We check "both" directions because the relationship could be defined as:
