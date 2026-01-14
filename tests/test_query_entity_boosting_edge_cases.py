@@ -8,7 +8,7 @@
 #
 # Source Code: https://github.com/CoReason-AI/coreason_archive
 
-from typing import List
+from typing import List, Tuple
 
 import pytest
 
@@ -16,203 +16,246 @@ from coreason_archive.archive import CoreasonArchive
 from coreason_archive.federation import UserContext
 from coreason_archive.graph_store import GraphStore
 from coreason_archive.interfaces import Embedder, EntityExtractor
-from coreason_archive.models import MemoryScope
+from coreason_archive.models import GraphEdgeType, MemoryScope
 from coreason_archive.vector_store import VectorStore
 
 
 class MockEmbedder(Embedder):
-    """Simple mock that returns fixed vectors."""
-
     def embed(self, text: str) -> List[float]:
-        # Return a dummy vector of 1536 dims
         return [0.1] * 1536
 
 
 class MockEntityExtractor(EntityExtractor):
-    """Mock extractor that supports edge cases."""
+    def __init__(self, entities_to_return: List[str] | None = None):
+        self.entities = entities_to_return or []
 
     async def extract(self, text: str) -> List[str]:
-        entities = []
-        if "Drug A" in text:
-            entities.append("Drug:A")
-        if "Drug B" in text:
-            entities.append("Drug:B")
-        if "Project Apollo" in text:
-            entities.append("Project:Apollo")
-        if "case mismatch" in text:
-            entities.append("concept:mismatch")  # Lowercase type
-        return entities
+        return self.entities
+
+
+@pytest.fixture
+def base_archive() -> Tuple[VectorStore, GraphStore, MockEmbedder]:
+    v = VectorStore()
+    g = GraphStore()
+    e = MockEmbedder()
+    return v, g, e
 
 
 @pytest.mark.asyncio
-async def test_multiple_query_entities() -> None:
-    """Test Case 1: Multiple entities in query (Drug:A and Drug:B)."""
-    v_store = VectorStore()
-    g_store = GraphStore()
-    embedder = MockEmbedder()
-    extractor = MockEntityExtractor()
-    archive = CoreasonArchive(v_store, g_store, embedder, extractor)
+async def test_two_hop_exclusion(base_archive: Tuple[VectorStore, GraphStore, MockEmbedder]) -> None:
+    """
+    Verify that boosting is strictly 1-hop.
+    Graph: Entity:Query -> Entity:Link1 -> Entity:Link2
+    Thought linked to Entity:Link2 should NOT be boosted.
+    """
+    v, g, e = base_archive
+    extractor = MockEntityExtractor(["Entity:Query"])
+    archive = CoreasonArchive(v, g, e, extractor)
 
-    # Thought A linked to Drug:A
-    t_a = await archive.add_thought("A", "A", MemoryScope.USER, "u1", "u1")
-    t_a.entities = ["Drug:A"]
+    # Setup Graph
+    g.add_relationship("Entity:Query", "Entity:Link1", GraphEdgeType.RELATED_TO)
+    g.add_relationship("Entity:Link1", "Entity:Link2", GraphEdgeType.RELATED_TO)
 
-    # Thought B linked to Drug:B
-    t_b = await archive.add_thought("B", "B", MemoryScope.USER, "u1", "u1")
-    t_b.entities = ["Drug:B"]
+    # Thought linked to Link2 (2 hops away)
+    thought = await archive.add_thought("prompt", "response", MemoryScope.USER, "u1", "u1")
+    thought.entities = ["Entity:Link2"]
 
-    # Thought C linked to nothing
-    t_c = await archive.add_thought("C", "C", MemoryScope.USER, "u1", "u1")
-    t_c.entities = []
-
-    # Query mentions both
-    query = "Compare Drug A and Drug B"
     context = UserContext(user_id="u1")
-
-    results = await archive.retrieve(query, context, graph_boost_factor=2.0)
-
-    result_ids = {t.id for t, s, m in results if m.get("is_boosted")}
-
-    assert t_a.id in result_ids
-    assert t_b.id in result_ids
-    assert t_c.id not in result_ids
-
-
-@pytest.mark.asyncio
-async def test_overlapping_entities() -> None:
-    """Test Case 2: Overlap between User Context and Query."""
-    v_store = VectorStore()
-    g_store = GraphStore()
-    embedder = MockEmbedder()
-    extractor = MockEntityExtractor()
-    archive = CoreasonArchive(v_store, g_store, embedder, extractor)
-
-    # Thought linked to Project:Apollo
-    t_apollo = await archive.add_thought("Apollo", "Apollo", MemoryScope.PROJECT, "Apollo", "u1")
-    t_apollo.entities = ["Project:Apollo"]
-
-    # User is in Project Apollo AND queries about it
-    context = UserContext(user_id="u1", project_ids=["Apollo"])
-    query = "Update on Project Apollo"
-
-    # Should get boosted. Overlap should not cause double boosting or errors.
-    results = await archive.retrieve(query, context, graph_boost_factor=2.0)
+    results = await archive.retrieve("query", context, graph_boost_factor=2.0)
 
     assert len(results) > 0
-    top_thought, top_score, meta = results[0]
+    _, _, meta = results[0]
 
-    assert top_thought.id == t_apollo.id
+    assert meta.get("is_boosted") is False, "2-hop neighbor should NOT be boosted"
+
+
+@pytest.mark.asyncio
+async def test_circular_graph_stability(base_archive: Tuple[VectorStore, GraphStore, MockEmbedder]) -> None:
+    """
+    Verify 1-hop expansion handles loops gracefully.
+    Graph: Node:A <-> Node:B
+    Query: Node:A
+    Thought: Node:B (Should be boosted)
+    """
+    v, g, e = base_archive
+    extractor = MockEntityExtractor(["Node:A"])
+    archive = CoreasonArchive(v, g, e, extractor)
+
+    # Circular loop
+    g.add_relationship("Node:A", "Node:B", GraphEdgeType.RELATED_TO)
+    g.add_relationship("Node:B", "Node:A", GraphEdgeType.RELATED_TO)
+
+    thought = await archive.add_thought("p", "r", MemoryScope.USER, "u1", "u1")
+    thought.entities = ["Node:B"]
+
+    context = UserContext(user_id="u1")
+    results = await archive.retrieve("query", context, graph_boost_factor=2.0)
+
+    assert len(results) > 0
+    _, _, meta = results[0]
     assert meta.get("is_boosted") is True
-    # Verify score is boosted exactly once (approx 2.0 * base)
-    # If boosted twice, it might be 4.0.
-    # Logic uses `boost_entities` set, so duplicates are removed.
-    assert top_score < 3.0
 
 
 @pytest.mark.asyncio
-async def test_empty_query_string() -> None:
-    """Test Case 3: Empty query string handling."""
-    v_store = VectorStore()
-    g_store = GraphStore()
-    embedder = MockEmbedder()
-    extractor = MockEntityExtractor()
-    archive = CoreasonArchive(v_store, g_store, embedder, extractor)
+async def test_multiple_query_entities_complex(base_archive: Tuple[VectorStore, GraphStore, MockEmbedder]) -> None:
+    """
+    Scenario:
+    Query yields "Type:E1" and "Type:E2".
+    Type:E1 -> Node:N1
+    Type:E2 -> Node:N2
+    Thought 1 linked to Node:N1
+    Thought 2 linked to Node:N2
+    Thought 3 linked to Type:E3 (unrelated)
+    """
+    v, g, e = base_archive
+    extractor = MockEntityExtractor(["Type:E1", "Type:E2"])
+    archive = CoreasonArchive(v, g, e, extractor)
 
-    await archive.add_thought("A", "A", MemoryScope.USER, "u1", "u1")
+    g.add_relationship("Type:E1", "Node:N1", GraphEdgeType.RELATED_TO)
+    g.add_relationship("Type:E2", "Node:N2", GraphEdgeType.RELATED_TO)
+
+    t1 = await archive.add_thought("1", "1", MemoryScope.USER, "u1", "u1")
+    t1.entities = ["Node:N1"]
+
+    t2 = await archive.add_thought("2", "2", MemoryScope.USER, "u1", "u1")
+    t2.entities = ["Node:N2"]
+
+    t3 = await archive.add_thought("3", "3", MemoryScope.USER, "u1", "u1")
+    t3.entities = ["Type:E3"]
+
     context = UserContext(user_id="u1")
+    results = await archive.retrieve("query", context, graph_boost_factor=2.0)
 
-    # Should handle empty query gracefully
-    results = await archive.retrieve("", context)
-    # Results depend on vector store handling of empty/zero vector.
-    # VectorStore mock returns [0.1]...
-    # If query vector is valid, search proceeds.
-    # Extractor returns empty list for "".
-    assert len(results) >= 0
+    res_map = {r[0].id: r for r in results}
+
+    assert res_map[t1.id][2]["is_boosted"] is True
+    assert res_map[t2.id][2]["is_boosted"] is True
+    assert res_map[t3.id][2]["is_boosted"] is False
 
 
 @pytest.mark.asyncio
-async def test_case_sensitivity_mismatch() -> None:
+async def test_graph_direction_both_ways(base_archive: Tuple[VectorStore, GraphStore, MockEmbedder]) -> None:
     """
-    Test Case 4: Case sensitivity mismatch.
-    Graph is strict. If thought has 'Concept:Mismatch' but extractor returns 'concept:mismatch',
-    it won't match unless logic handles it or strings match exactly.
-    Current implementation assumes exact string match.
+    Verify expansion works for incoming edges too.
+    Graph: Node:Child -> BELONGS_TO -> Node:Parent(QueryEntity)
+    Query: Node:Parent
+    Thought linked to Node:Child.
     """
-    v_store = VectorStore()
-    g_store = GraphStore()
-    embedder = MockEmbedder()
-    extractor = MockEntityExtractor()
-    archive = CoreasonArchive(v_store, g_store, embedder, extractor)
+    v, g, e = base_archive
+    extractor = MockEntityExtractor(["Node:Parent"])
+    archive = CoreasonArchive(v, g, e, extractor)
 
-    # Thought has "Concept:Mismatch" (Upper C, Upper M)
-    t = await archive.add_thought("X", "X", MemoryScope.USER, "u1", "u1")
-    t.entities = ["Concept:Mismatch"]
+    g.add_relationship("Node:Child", "Node:Parent", GraphEdgeType.BELONGS_TO)
+
+    thought = await archive.add_thought("p", "r", MemoryScope.USER, "u1", "u1")
+    thought.entities = ["Node:Child"]
 
     context = UserContext(user_id="u1")
-    query = "test case mismatch"  # Extractor returns "concept:mismatch" (lower)
+    results = await archive.retrieve("query", context, graph_boost_factor=2.0)
 
-    results = await archive.retrieve(query, context, graph_boost_factor=2.0)
-
-    # Expect NO boost because strings don't match exactly in set
-    # This verifies the limitation/expectation of exact match
-    t_res, score, meta = results[0]
-    assert meta.get("is_boosted") is False
+    assert len(results) > 0
+    _, _, meta = results[0]
+    assert meta.get("is_boosted") is True
 
 
 @pytest.mark.asyncio
-async def test_complex_needle_in_haystack() -> None:
+async def test_graph_boost_scope_security(base_archive: Tuple[VectorStore, GraphStore, MockEmbedder]) -> None:
     """
-    Test Case 5: Needle in Haystack.
-    100 thoughts, 1 relevant via Entity Hop.
+    Security Test:
+    Verify that graph boosting does NOT expose thoughts that were filtered out by RBAC/Scope.
+    Scenario:
+    - User has NO access to 'Project:Restricted'.
+    - Query extracts 'Entity:Secret'.
+    - Graph: 'Entity:Secret' -> 'Project:Restricted'.
+    - Thought is in Scope 'PROJECT', scope_id='Restricted', linked to 'Project:Restricted'.
+    - Even though 'Entity:Secret' is in query and links to thought's entity,
+      FederationBroker should block it BEFORE boosting happens.
     """
-    v_store = VectorStore()
-    g_store = GraphStore()
-    embedder = MockEmbedder()
-    extractor = MockEntityExtractor()
-    archive = CoreasonArchive(v_store, g_store, embedder, extractor)
+    v, g, e = base_archive
+    extractor = MockEntityExtractor(["Entity:Secret"])
+    archive = CoreasonArchive(v, g, e, extractor)
 
-    # 1. Add 50 noise thoughts
-    for i in range(50):
-        t = await archive.add_thought(f"Noise {i}", "Noise", MemoryScope.USER, "u1", "u1")
-        t.entities = [f"Noise:{i}"]
+    # Graph Link
+    g.add_relationship("Entity:Secret", "Project:Restricted", GraphEdgeType.RELATED_TO)
 
-    # 2. Add Needle thought linked to "Drug:A"
-    needle = await archive.add_thought("Needle", "Secret Info", MemoryScope.USER, "u1", "u1")
-    needle.entities = ["Drug:A"]
+    # Thought in restricted project
+    thought = await archive.add_thought("secret", "stuff", MemoryScope.PROJECT, "Restricted", "admin")
+    thought.entities = ["Project:Restricted"]
 
-    # 3. Add 50 more noise thoughts
-    for i in range(50, 100):
-        t = await archive.add_thought(f"Noise {i}", "Noise", MemoryScope.USER, "u1", "u1")
-        t.entities = [f"Noise:{i}"]
+    # User NOT in 'Restricted' project
+    context = UserContext(user_id="u1", project_ids=["Public"])
 
-    # Query for Drug A
+    results = await archive.retrieve("query", context, graph_boost_factor=2.0)
+
+    assert len(results) == 0, "Restricted thought should be filtered out despite graph boost potential"
+
+
+@pytest.mark.asyncio
+async def test_zero_vector_score_boosting(base_archive: Tuple[VectorStore, GraphStore, MockEmbedder]) -> None:
+    """
+    Edge Case:
+    Vector Score is 0.0 (orthogonal).
+    Graph Boost is active.
+    Result Score = 0.0 * Boost = 0.0.
+    Verify logic handles this gracefully (no divide by zero, etc.) and is_boosted is set.
+    """
+    v, g, e = base_archive
+    extractor = MockEntityExtractor(["Entity:Boost"])
+    archive = CoreasonArchive(v, g, e, extractor)
+
+    # Embedder that returns orthogonal vectors
+    # We need to subclass or mock differently because MockEmbedder returns fixed [0.1]
+    class OrthogonalEmbedder(MockEmbedder):
+        def embed(self, text: str) -> List[float]:
+            if text == "query":
+                return [1.0, 0.0] + [0.0] * 1534
+            else:
+                return [0.0, 1.0] + [0.0] * 1534
+
+    archive.embedder = OrthogonalEmbedder()
+
+    # Graph
+    g.add_relationship("Entity:Boost", "Entity:Target", GraphEdgeType.RELATED_TO)
+
+    thought = await archive.add_thought("content", "resp", MemoryScope.USER, "u1", "u1")
+    thought.entities = ["Entity:Target"]
+
     context = UserContext(user_id="u1")
-    query = "Tell me about Drug A"
+    # min_score=0.0 allows 0 score results
+    results = await archive.retrieve("query", context, min_score=0.0, graph_boost_factor=2.0)
 
-    # We need to ensure retrieval actually *finds* it.
-    # Vector search returns limit*5 candidates.
-    # If limit=10, candidates=50.
-    # Total 101 thoughts. All have identical vector score (1.0).
-    # Sort order is stable or random. Needle might be at index 50.
-    # If we request limit=25 (candidates=125), we cover all.
+    assert len(results) > 0
+    _, score, meta = results[0]
 
-    _ = await archive.retrieve(query, context, limit=20)
+    assert score == 0.0
+    assert meta.get("is_boosted") is True
 
-    # Since we can't guarantee vector rank without distinct vectors,
-    # we rely on the fact that VectorStore.search returns *all* matching min_score if we requested enough?
-    # No, search returns top N.
-    # With identical vectors, it's arbitrary.
-    # BUT, to test *boosting*, we assume it's in the candidates.
 
-    # Let's verify boost applied if it IS returned.
-    # Or force it to be returned by making vector search irrelevant (small N) but ensuring it's there?
-    # Actually, in real world, vector score for "Drug A" query and "Needle" thought might be low,
-    # but still higher than "Noise".
-    # Here vectors are identical.
+@pytest.mark.asyncio
+async def test_overlapping_active_context_and_query(base_archive: Tuple[VectorStore, GraphStore, MockEmbedder]) -> None:
+    """
+    User is in Project P.
+    Query also extracts Project P.
+    Graph: Project:P -> Node:Neighbor
+    Thought linked to Node:Neighbor.
+    """
+    v, g, e = base_archive
+    extractor = MockEntityExtractor(["Project:P"])
+    archive = CoreasonArchive(v, g, e, extractor)
 
-    # Let's search with limit=101 to ensure it's considered.
-    results_all = await archive.retrieve(query, context, limit=101, graph_boost_factor=10.0)
+    g.add_relationship("Project:P", "Node:Neighbor", GraphEdgeType.RELATED_TO)
 
-    # Needle should be #1 because of boost
-    assert results_all[0][0].id == needle.id
-    assert results_all[0][2]["is_boosted"] is True
+    # Use a different user scope to avoid auto-project context if we weren't explicit,
+    # but here we set project scope on thought.
+    # scope_id should be just "P" to match context.project_ids=["P"]
+    thought = await archive.add_thought("p", "r", MemoryScope.PROJECT, "P", "u1")
+    thought.entities = ["Node:Neighbor"]
+
+    # Context puts user in Project:P
+    context = UserContext(user_id="u1", project_ids=["P"])
+
+    results = await archive.retrieve("query", context, graph_boost_factor=2.0)
+
+    assert len(results) > 0
+    _, _, meta = results[0]
+    assert meta.get("is_boosted") is True

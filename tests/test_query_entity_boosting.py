@@ -17,7 +17,7 @@ from coreason_archive.archive import CoreasonArchive
 from coreason_archive.federation import UserContext
 from coreason_archive.graph_store import GraphStore
 from coreason_archive.interfaces import Embedder, EntityExtractor
-from coreason_archive.models import MemoryScope
+from coreason_archive.models import GraphEdgeType, MemoryScope
 from coreason_archive.vector_store import VectorStore
 
 
@@ -167,3 +167,48 @@ async def test_retrieve_graceful_extractor_failure() -> None:
 
     assert len(results) == 1
     # Check logs if possible, but mainly ensure no crash
+
+
+@pytest.mark.asyncio
+async def test_query_entity_expansion_boost() -> None:
+    """
+    Test Case 4: Test that a thought linked to a neighbor of the query entity is boosted.
+    Scenario:
+    - Graph: "Drug:Z" -> RELATED_TO -> "Concept:Cisplatin"
+    - Thought: Contains "Concept:Cisplatin" (but NOT "Drug:Z")
+    - Query: "Drug Z" (Extracts "Drug:Z")
+
+    Expectation:
+    - "Drug:Z" is extracted from query.
+    - Archive expands "Drug:Z" to find neighbor "Concept:Cisplatin".
+    - Thought with "Concept:Cisplatin" is boosted.
+    """
+    v_store = VectorStore()
+    g_store = GraphStore()
+    embedder = MockEmbedder()
+    extractor = MockEntityExtractor()
+    archive = CoreasonArchive(v_store, g_store, embedder, extractor)
+
+    # 1. Setup Graph: Drug:Z -> Concept:Cisplatin
+    g_store.add_relationship("Drug:Z", "Concept:Cisplatin", GraphEdgeType.RELATED_TO)
+
+    # 2. Add Thought with Concept:Cisplatin
+    thought = await archive.add_thought(
+        prompt="Chemo protocols",
+        response="Use Cisplatin for efficacy.",
+        scope=MemoryScope.USER,
+        scope_id="user_1",
+        user_id="user_1",
+    )
+    # Manually inject entities (skipping background extractor for determinism)
+    thought.entities = ["Concept:Cisplatin"]
+
+    # 3. Query for "Drug Z"
+    context = UserContext(user_id="user_1")
+    results = await archive.retrieve(query="Tell me about Drug Z", context=context, limit=1, graph_boost_factor=2.0)
+
+    assert len(results) > 0
+    top_thought, top_score, meta = results[0]
+
+    # Verification
+    assert meta.get("is_boosted") is True, "Thought should be boosted via 1-hop graph expansion of query entity"
