@@ -212,3 +212,129 @@ async def test_query_entity_expansion_boost() -> None:
 
     # Verification
     assert meta.get("is_boosted") is True, "Thought should be boosted via 1-hop graph expansion of query entity"
+
+
+@pytest.mark.asyncio
+async def test_hybrid_retrieval_low_vector_similarity() -> None:
+    """
+    Test Case 5: Verify "User Story A" - Hybrid Retrieval.
+    Scenario:
+    - Thought T1 has very low vector similarity to query (excluded from vector search results).
+    - But T1 is strongly linked via Graph to the Query Entity.
+    - Expectation: T1 is retrieved despite low vector score.
+    """
+    v_store = VectorStore()
+    g_store = GraphStore()
+
+    # Custom Embedder that makes query and thought orthogonal (0 similarity)
+    class OrthogonalEmbedder(Embedder):
+        def embed(self, text: str) -> List[float]:
+            if "query" in text:
+                return [1.0, 0.0]  # Query Vector
+            return [0.0, 1.0]  # Thought Vector
+
+    embedder = OrthogonalEmbedder()
+    extractor = MockEntityExtractor()
+    archive = CoreasonArchive(v_store, g_store, embedder, extractor)
+
+    # 1. Add Thought T1 about "Drug Z" (but text yields orthogonal vector)
+    t1 = await archive.add_thought(
+        prompt="Different context",
+        response="Some content.",
+        scope=MemoryScope.USER,
+        scope_id="user_1",
+        user_id="user_1",
+    )
+    # T1 vector will be [0, 1]
+    # Set entities manually to link it
+    t1.entities = ["Drug:Z"]
+    # Ensure graph node exists for T1 (add_thought does it via process_entities usually, do manually here)
+    g_store.add_entity(f"Thought:{t1.id}")
+    g_store.add_relationship("Drug:Z", f"Thought:{t1.id}", GraphEdgeType.RELATED_TO)
+
+    # 2. Add Thought T2 (Control) - also orthogonal, no link
+    t2 = await archive.add_thought(
+        prompt="Noise",
+        response="Noise.",
+        scope=MemoryScope.USER,
+        scope_id="user_1",
+        user_id="user_1",
+    )
+    # T2 vector [0, 1]
+
+    # 3. Query "query about Drug Z"
+    # Query vector [1, 0]
+    # Similarity to T1 and T2 is 0.0.
+    # Vector Search with min_score=0.1 would exclude them.
+    query = "query about Drug Z"
+    context = UserContext(user_id="user_1")
+
+    # We set min_score=0.1 to prove T1 would be lost in standard retrieval
+    results = await archive.retrieve(
+        query=query,
+        context=context,
+        limit=10,
+        min_score=0.1,
+        graph_boost_factor=10.0,  # High boost
+    )
+
+    # 4. Verify
+    # T2 should be missing (score 0.0 < 0.1, no graph link)
+    # T1 should be present (sourced via graph, even if base score is 0.0)
+    # Wait, if base score is 0.0, boost * 0.0 = 0.0.
+    # So it might still be ranked low, but it should be PRESENT in the list if we don't filter graph results.
+    # My implementation does NOT filter graph-sourced items by min_score before merging.
+    # However, it filters `filtered_candidates` by `filter_fn` (RBAC).
+    # And then sorts.
+    # Does it apply min_score at the end? No. `retrieve` signature has `min_score` used in `vector_store.search`.
+
+    # So T1 should be in results with score 0.0 (or boosted 0.0).
+    # IF dot product is 0.
+    # Let's adjust vector slightly to have non-zero base score but < min_score?
+    # Or rely on boost being additive? No, boost is multiplicative (PRD).
+    # If base score is 0, boost does nothing.
+    # "Story A" implies "Low similarity" (not zero).
+    # Let's make Embedder return [0.1, 0.9] for thought.
+    # Query [1.0, 0.0].
+    # Sim = 0.1 / (1 * ~0.9) ~= 0.11.
+    # Let's make it simpler.
+    # Query: [1, 0]. Thought: [0.05, 0.99...]. Sim ~ 0.05.
+    # min_score = 0.1.
+    # Thought excluded by Vector Search.
+    # Retrieved by Graph.
+    # Boosted: 0.05 * 10 = 0.5.
+    # Result: 0.5.
+
+    # Redefine embedder
+    class LowSimEmbedder(Embedder):
+        def embed(self, text: str) -> List[float]:
+            if "query" in text:
+                return [1.0, 0.0]
+            # Thought vector: small component in x, large in y
+            return [0.05, 0.998]  # norm ~1.0
+
+    archive.embedder = LowSimEmbedder()
+    # Update thought vectors (hacky, but easier than re-adding)
+    t1.vector = [0.05, 0.998]
+    t2.vector = [0.05, 0.998]
+    # Update VectorStore cache if needed (it uses .vector attribute in search, or cached _vectors list)
+    # VectorStore implementation caches _vectors list. We must update it.
+    v_store._vectors = [t.vector for t in v_store.thoughts]
+
+    results = await archive.retrieve(
+        query=query,
+        context=context,
+        limit=10,
+        min_score=0.1,  # Threshold higher than 0.05
+        graph_boost_factor=10.0,
+    )
+
+    t1_result = next((r for r in results if r[0].id == t1.id), None)
+    t2_result = next((r for r in results if r[0].id == t2.id), None)
+
+    assert t1_result is not None, "T1 should be retrieved via Graph Sourcing"
+    assert t2_result is None, "T2 should be excluded by Vector Search min_score and has no graph link"
+
+    # Check score
+    # Base ~0.05. Boost 10. Final ~0.5.
+    assert t1_result[1] > 0.4
