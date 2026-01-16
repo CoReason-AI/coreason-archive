@@ -90,6 +90,48 @@ class VectorStore:
         """
         return [t for t in self.thoughts if t.scope == scope and t.scope_id == scope_id]
 
+    def get_by_ids(self, ids: List[UUID]) -> List[CachedThought]:
+        """
+        Retrieves thoughts matching the given list of UUIDs.
+        Ignores IDs that are not found.
+
+        Args:
+            ids: A list of UUIDs to retrieve.
+
+        Returns:
+            A list of matching CachedThought objects.
+        """
+        # Convert list to set for O(1) lookups if list is large,
+        # but for typical use cases (looping over thoughts), standard approach is fine.
+        # Since self.thoughts is a list, we must iterate.
+        # Optimisation: Index by ID? For MVP, linear scan is acceptable or set-based filter.
+        target_ids = set(ids)
+        return [t for t in self.thoughts if t.id in target_ids]
+
+    def calculate_similarity(self, thought: CachedThought, query_vector: List[float]) -> float:
+        """
+        Calculates the cosine similarity between a thought and a query vector.
+
+        Args:
+            thought: The thought object.
+            query_vector: The query embedding.
+
+        Returns:
+            Cosine similarity score (0.0 to 1.0, clamped).
+        """
+        v1 = np.array(thought.vector)
+        v2 = np.array(query_vector)
+
+        norm1 = np.linalg.norm(v1)
+        norm2 = np.linalg.norm(v2)
+
+        if norm1 == 0 or norm2 == 0:
+            return 0.0
+
+        dot_product = np.dot(v1, v2)
+        score = dot_product / (norm1 * norm2)
+        return float(score)
+
     def mark_stale_by_urn(self, urn: str) -> int:
         """
         Marks thoughts as stale if they are linked to the given source URN.
