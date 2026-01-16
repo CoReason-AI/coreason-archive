@@ -395,3 +395,51 @@ def test_search_limit_edge_cases() -> None:
     # Limit > total
     results_all = store.search([1.0], limit=100)
     assert len(results_all) == 2
+
+
+def test_get_by_ids() -> None:
+    """Test retrieving thoughts by a list of UUIDs."""
+    store = VectorStore()
+    t1 = create_dummy_thought([1.0])
+    t2 = create_dummy_thought([0.5])
+    t3 = create_dummy_thought([0.0])
+
+    store.add(t1)
+    store.add(t2)
+    store.add(t3)
+
+    # Retrieve subset
+    found = store.get_by_ids([t1.id, t3.id])
+    assert len(found) == 2
+    ids = {t.id for t in found}
+    assert t1.id in ids
+    assert t3.id in ids
+    assert t2.id not in ids
+
+    # Retrieve with non-existent ID
+    random_id = uuid4()
+    found_mixed = store.get_by_ids([t2.id, random_id])
+    assert len(found_mixed) == 1
+    assert found_mixed[0].id == t2.id
+
+    # Retrieve empty
+    assert store.get_by_ids([]) == []
+
+
+def test_calculate_similarity() -> None:
+    """Test calculating similarity between thought and vector."""
+    store = VectorStore()
+    t1 = create_dummy_thought([1.0, 0.0])
+    # t2 unused, removed
+
+    # Orthogonal
+    sim = store.calculate_similarity(t1, [0.0, 1.0])
+    assert pytest.approx(sim, abs=1e-5) == 0.0
+
+    # Perfect match
+    sim = store.calculate_similarity(t1, [1.0, 0.0])
+    assert pytest.approx(sim, abs=1e-5) == 1.0
+
+    # Zero vector handling
+    sim = store.calculate_similarity(t1, [0.0, 0.0])
+    assert sim == 0.0

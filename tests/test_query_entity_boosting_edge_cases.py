@@ -97,6 +97,38 @@ async def test_circular_graph_stability(base_archive: Tuple[VectorStore, GraphSt
 
 
 @pytest.mark.asyncio
+async def test_malformed_thought_node_uuid(
+    base_archive: Tuple[VectorStore, GraphStore, MockEmbedder],
+) -> None:
+    """
+    Test resilience against malformed "Thought:..." nodes in the graph.
+    Scenario:
+    - Graph contains a node "Thought:INVALID_UUID" linked to Query Entity.
+    - Retrieval should ignore this node and not crash.
+    """
+    v, g, e = base_archive
+    extractor = MockEntityExtractor(["Entity:Q"])
+    archive = CoreasonArchive(v, g, e, extractor)
+
+    # 1. Add Malformed Node and link
+    g.add_entity("Thought:not-a-uuid")
+    g.add_relationship("Entity:Q", "Thought:not-a-uuid", GraphEdgeType.RELATED_TO)
+
+    # 2. Add Valid Thought
+    t1 = await archive.add_thought("p", "r", MemoryScope.USER, "u1", "u1")
+    t1.entities = ["Entity:Q"]  # Direct link, will be boosted anyway, but we check crash
+
+    context = UserContext(user_id="u1")
+
+    # 3. Retrieve
+    # Should not raise ValueError
+    results = await archive.retrieve("query", context)
+
+    assert len(results) > 0
+    assert results[0][0].id == t1.id
+
+
+@pytest.mark.asyncio
 async def test_multiple_query_entities_complex(base_archive: Tuple[VectorStore, GraphStore, MockEmbedder]) -> None:
     """
     Scenario:

@@ -217,34 +217,19 @@ class CoreasonArchive:
         # 1. Vector Search
         query_vector = self.embedder.embed(query)
         # Fetch more candidates than needed to account for filtering and re-ranking
-        raw_candidates = self.vector_store.search(query_vector, limit=limit * 5, min_score=min_score)
+        # Returns List[(thought, score)]
+        vector_results = self.vector_store.search(query_vector, limit=limit * 5, min_score=min_score)
 
-        if not raw_candidates:
-            return []
+        # Initialize candidates dictionary {thought_id: (thought, base_score)}
+        candidates_map = {t.id: (t, s) for t, s in vector_results}
 
-        # 2. Federation Filter
-        filter_fn = FederationBroker.get_filter(context)
-        filtered_candidates = []
-        for thought, score in raw_candidates:
-            if filter_fn(thought):
-                filtered_candidates.append((thought, score))
+        # 2. Graph Sourcing (Hybrid Retrieval)
+        # Extract entities from query & context, expand graph, and find linked thoughts.
+        # This ensures we find thoughts that are structurally relevant even if semantically distant.
 
-        # 3. Graph Boost & 4. Temporal Decay
-        scored_results: List[Tuple[CachedThought, float, dict[str, Any]]] = []
-
-        # Pre-compute active project entities for boosting
-        # We start with the projects the user is explicitly part of.
         active_projects = {f"Project:{pid}" for pid in context.project_ids}
-
-        # Expand active_projects with 1-hop neighbors from GraphStore.
-        # This implements the Neuro-Symbolic "Graph Traversal" boosting.
-        # We want to boost thoughts that are LINKED to the active project, even if
-        # they don't explicitly contain the Project entity itself.
-        # E.g. Thought(Entity:A) --[RELATED]--> Project:Apollo
         boost_entities = set(active_projects)
 
-        # Extract entities from the query itself to support "Entity Hop"
-        # If the query mentions "Drug:Z", we want to boost thoughts linked to "Drug:Z"
         if self.entity_extractor:
             try:
                 query_entities = await self.entity_extractor.extract(query)
@@ -252,22 +237,63 @@ class CoreasonArchive:
                     logger.debug(f"Extracted entities from query: {query_entities}")
                     boost_entities.update(query_entities)
             except Exception as e:
-                # We log warning but do not fail the retrieval if extraction fails
                 logger.warning(f"Failed to extract entities from query: {e}")
 
-        # Expand ALL seed entities (Active Projects + Query Entities) with 1-hop neighbors
-        # We iterate over a copy of the set because we will modify boost_entities
+        # Expand ALL seed entities with 1-hop neighbors
         seed_entities = list(boost_entities)
         for seed_entity in seed_entities:
-            # We check "both" directions because the relationship could be defined as:
-            # 1. Seed -> RELATED -> Entity (Outgoing)
-            # 2. Entity -> BELONGS_TO -> Seed (Incoming)
             neighbors = self.graph_store.get_related_entities(seed_entity, direction="both")
             for neighbor, _relation in neighbors:
                 boost_entities.add(neighbor)
 
         if len(boost_entities) > len(seed_entities):
             logger.debug(f"Expanded boost entities from {len(seed_entities)} to {len(boost_entities)}")
+
+        # Find thoughts linked to these boost_entities
+        # In the GraphStore, thoughts are nodes "Thought:<uuid>"
+        # We need to find nodes connected to boost_entities that start with "Thought:"
+        # Or simpler: Is the thought node ITSELF in boost_entities?
+        # Since we did 1-hop expansion, if a thought is linked to a seed entity (e.g., Drug:Z),
+        # then "Thought:<id>" will be in neighbors (and thus in boost_entities).
+        # So we just scan boost_entities for "Thought:..." nodes.
+
+        # We need to handle UUID conversion carefully.
+        # Python's uuid.UUID(str) works.
+        from uuid import UUID
+
+        valid_ids: List[UUID] = []
+        for entity in boost_entities:
+            if entity.startswith("Thought:"):
+                try:
+                    tid_str = entity.split("Thought:", 1)[1]
+                    valid_ids.append(UUID(tid_str))
+                except (ValueError, IndexError):
+                    continue
+
+        if valid_ids:
+            # Batch fetch from VectorStore
+            graph_thoughts = self.vector_store.get_by_ids(valid_ids)
+            logger.debug(f"Graph Sourcing found {len(graph_thoughts)} thoughts linked to context.")
+
+            for thought in graph_thoughts:
+                if thought.id not in candidates_map:
+                    # Calculate base score since it wasn't in vector results
+                    score = self.vector_store.calculate_similarity(thought, query_vector)
+                    candidates_map[thought.id] = (thought, score)
+
+        # 3. Federation Filter
+        filter_fn = FederationBroker.get_filter(context)
+        filtered_candidates = []
+
+        for thought, base_score in candidates_map.values():
+            if filter_fn(thought):
+                filtered_candidates.append((thought, base_score))
+
+        if not filtered_candidates:
+            return []
+
+        # 4. Graph Boost & 5. Temporal Decay
+        scored_results: List[Tuple[CachedThought, float, dict[str, Any]]] = []
 
         for thought, base_score in filtered_candidates:
             current_score = base_score
