@@ -35,6 +35,24 @@ class FederationBroker:
     """
 
     @staticmethod
+    def check_access(user_roles: List[str], required_roles: List[str]) -> bool:
+        """
+        Checks if the user has the required roles to access a resource.
+        Returns True if required_roles is empty OR if user has at least one matching role.
+
+        Args:
+            user_roles: The list of roles assigned to the user.
+            required_roles: The list of roles required/allowed for the resource.
+
+        Returns:
+            True if access is granted, False otherwise.
+        """
+        if not required_roles:
+            return True
+        # Check for intersection
+        return any(role in user_roles for role in required_roles)
+
+    @staticmethod
     def get_filter(context: UserContext) -> Callable[[CachedThought], bool]:
         """
         Returns a filter function that accepts a CachedThought and returns True
@@ -66,24 +84,8 @@ class FederationBroker:
                     return False
 
             # 2. RBAC Check
-            # If the thought requires specific roles, the user must have ALL of them?
-            # Or ANY of them?
-            # PRD: "access_roles: RBAC claims required to access this thought"
-            # Usually 'required' implies ALL, or at least one match?
-            # Standard RBAC often implies "User must have role X".
-            # If access_roles is ["admin"], user must have "admin".
-            # If access_roles is ["admin", "editor"], does user need both?
-            # "Claims required" usually means the resource is protected by these claims.
-            # A common interpretation is: The user must possess at least one of the allowed roles
-            # OR the user must possess all required roles.
-            # Given "access_roles: List[str]", let's assume it lists the roles that *can* access it.
-            # i.e., User needs (Role A OR Role B).
-            # If list is empty, no specific role required (Public within scope).
-            if thought.access_roles:
-                # intersection of thought.access_roles and context.roles must not be empty
-                has_role = any(role in context.roles for role in thought.access_roles)
-                if not has_role:
-                    return False
+            if not FederationBroker.check_access(context.roles, thought.access_roles):
+                return False
 
             return True
 
