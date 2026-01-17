@@ -10,6 +10,7 @@
 
 from typing import Protocol, runtime_checkable
 
+from coreason_archive.federation import FederationBroker
 from coreason_archive.graph_store import GraphStore
 from coreason_archive.models import GraphEdgeType, MemoryScope
 from coreason_archive.utils.logger import logger
@@ -56,9 +57,29 @@ class CoreasonRelocationManager(RelocationManager):
     async def on_role_change(self, user_id: str, new_roles: list[str]) -> None:
         """
         Handle a change in user roles.
-        Currently passive: access control is handled by FederationBroker.
+        Sanitizes user memories by validating them against the new role set.
         """
-        logger.info(f"User {user_id} roles updated to {new_roles}. No active migration required.")
+        logger.info(f"Processing role change for {user_id}. New roles: {new_roles}")
+
+        # 1. Find all USER scope memories
+        user_thoughts = self.vector_store.get_by_scope(MemoryScope.USER, user_id)
+
+        thoughts_to_delete = []
+
+        for thought in user_thoughts:
+            # 2. Check if new roles satisfy access requirements
+            if not FederationBroker.check_access(new_roles, thought.access_roles):
+                logger.warning(
+                    f"Thought {thought.id} (required: {thought.access_roles}) not accessible with new roles {new_roles}"
+                )
+                thoughts_to_delete.append(thought)
+
+        # 3. Delete non-compliant thoughts
+        for thought in thoughts_to_delete:
+            self.vector_store.delete(thought.id)
+            logger.info(f"Sanitized (deleted) thought {thought.id} due to role change for {user_id}")
+
+        logger.info(f"Role change sanitization complete. Deleted {len(thoughts_to_delete)} thoughts.")
 
     async def on_dept_transfer(self, user_id: str, old_dept_id: str, new_dept_id: str) -> None:
         """
