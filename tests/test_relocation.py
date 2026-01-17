@@ -34,7 +34,12 @@ def manager(vector_store: VectorStore, graph_store: GraphStore) -> CoreasonReloc
     return CoreasonRelocationManager(vector_store, graph_store)
 
 
-def create_thought(user_id: str, entities: list[str], content: str = "Test thought") -> CachedThought:
+def create_thought(
+    user_id: str,
+    entities: list[str],
+    content: str = "Test thought",
+    access_roles: list[str] | None = None,
+) -> CachedThought:
     return CachedThought(
         id=uuid4(),
         vector=[0.1] * 1536,
@@ -47,7 +52,7 @@ def create_thought(user_id: str, entities: list[str], content: str = "Test thoug
         source_urns=[],
         created_at=datetime.now(timezone.utc),
         ttl_seconds=3600,
-        access_roles=[],
+        access_roles=access_roles or [],
     )
 
 
@@ -211,10 +216,41 @@ async def test_relocation_no_effect_on_other_scopes(
 
 
 @pytest.mark.asyncio
-async def test_relocation_role_change_passive(manager: CoreasonRelocationManager) -> None:
-    """Test that on_role_change is passive (no error)."""
-    await manager.on_role_change("user_1", ["admin"])
-    # If no exception, passed.
+async def test_relocation_role_change_sanitization(
+    manager: CoreasonRelocationManager, vector_store: VectorStore
+) -> None:
+    """
+    Scenario:
+    User has 2 thoughts:
+    1. Public thought (access_roles=[])
+    2. Admin thought (access_roles=["admin"])
+
+    Action: User roles change from ["admin"] to ["user"].
+    Expectation: Thought 2 is deleted. Thought 1 remains.
+    """
+    user_id = "user_role_change"
+
+    t1 = create_thought(user_id, [], "Public", access_roles=[])
+    t2 = create_thought(user_id, [], "Admin Only", access_roles=["admin"])
+
+    vector_store.add(t1)
+    vector_store.add(t2)
+
+    # Run Role Change (Loss of Admin)
+    await manager.on_role_change(user_id, ["user"])
+
+    remaining = vector_store.get_by_scope(MemoryScope.USER, user_id)
+    ids = [t.id for t in remaining]
+
+    assert t1.id in ids
+    assert t2.id not in ids
+
+    # Run Role Change (Gain Admin - irrelevant for existing thoughts unless checked,
+    # but here we check idempotency/safety)
+    await manager.on_role_change(user_id, ["admin", "user"])
+    # Nothing deleted (t1 is public)
+    remaining_2 = vector_store.get_by_scope(MemoryScope.USER, user_id)
+    assert len(remaining_2) == 1
 
 
 @pytest.mark.asyncio
