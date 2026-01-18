@@ -95,8 +95,11 @@ async def test_add_thought_no_extractor() -> None:
     assert len(v_store.thoughts) == 1
     # Entities empty
     assert thought.entities == []
-    # Graph store empty (except maybe if we added logic to add thought node regardless? No.)
-    assert len(g_store.graph.nodes) == 0
+    # Graph store is NOT empty now due to synchronous structural linking (User, Thought, Scope)
+    # Expect: User:user_123, Thought:<id>
+    # Since Scope is USER and scope_id is user_123, Scope entity is also User:user_123
+    assert g_store.graph.has_node("User:user_123")
+    assert g_store.graph.has_node(f"Thought:{thought.id}")
 
 
 @pytest.mark.asyncio
