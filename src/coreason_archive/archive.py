@@ -150,7 +150,30 @@ class CoreasonArchive:
         self.vector_store.add(thought)
         logger.info(f"Added thought {thought.id} to VectorStore")
 
-        # 4. Background Extraction
+        # 4. Synchronous Graph Ingestion (Metadata Linking)
+        # Create structural edges: User -> CREATED -> Thought
+        # Sanitize IDs to avoid GraphStore errors on empty strings
+        safe_user_id = user_id if user_id else "Unknown"
+        safe_scope_id = scope_id if scope_id else "Unknown"
+
+        user_node = f"User:{safe_user_id}"
+        thought_node = f"Thought:{thought.id}"
+        self.graph_store.add_relationship(user_node, thought_node, GraphEdgeType.CREATED)
+
+        # Create structural edges: Thought -> BELONGS_TO -> ScopeEntity
+        scope_prefix = {
+            MemoryScope.USER: "User",
+            MemoryScope.PROJECT: "Project",
+            MemoryScope.DEPARTMENT: "Department",
+            MemoryScope.CLIENT: "Client",
+        }.get(scope, "Context")
+
+        if scope_prefix:
+            scope_node = f"{scope_prefix}:{safe_scope_id}"
+            self.graph_store.add_relationship(thought_node, scope_node, GraphEdgeType.BELONGS_TO)
+            logger.debug(f"Linked thought {thought.id} to scope {scope_node}")
+
+        # 5. Background Extraction
         if self.entity_extractor:
             self.task_runner.run(self.process_entities(thought, combined_text))
 

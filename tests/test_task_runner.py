@@ -180,8 +180,15 @@ async def test_archive_uses_injected_runner() -> None:
     # Verify vector store has thought
     assert len(v_store.thoughts) == 1
 
-    # Verify graph store does NOT have entities yet (because task wasn't run)
-    assert len(g_store.graph.nodes) == 0
+    # Verify graph store HAS structural nodes (synchronous)
+    # User:user and Thought:<id>
+    assert g_store.graph.has_node("User:user")
+    thought = v_store.thoughts[0]
+    assert g_store.graph.has_node(f"Thought:{thought.id}")
+
+    # But it does NOT have extracted entities (because task wasn't run)
+    # Extractor returns "Project:Apollo"
+    assert not g_store.graph.has_node("Project:Apollo")
 
     # Now run the collected task manually to verify it works
     task_coro = mock_runner.submitted_tasks[0]

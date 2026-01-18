@@ -78,15 +78,24 @@ async def test_concurrent_ingestion() -> None:
     assert len(v_store.thoughts) == 50
 
     # GraphStore should have 50 Thought nodes + 1 Project node
-    # Each thought extraction adds "Project:AsyncTest"
-    # And "Thought:ID"
-    # Total nodes = 50 (Thoughts) + 1 (Project) = 51
-    # Check if "Project:AsyncTest" exists
+    # + 1 User node (u1) linked structurally
+    # Each thought:
+    # 1. User -> CREATED -> Thought (Structural)
+    # 2. Thought -> BELONGS_TO -> User:u1 (Structural) - note: scope=USER, scope_id=u1
+    # 3. Project:AsyncTest <-> Thought (Extracted) - 2 edges (RELATED_TO both ways)
+    #
+    # Nodes:
+    # 1 User:u1
+    # 50 Thought:X
+    # 1 Project:AsyncTest
+    # Total nodes = 52
     assert g_store.graph.has_node("Project:AsyncTest")
+    assert g_store.graph.has_node("User:u1")
 
-    # Check edges count. Each thought has 2 edges (Thought <-> Project)
-    # Total edges = 100
-    assert g_store.graph.number_of_edges() == 100
+    # Edges per thought:
+    # 1 (CREATED) + 1 (BELONGS_TO) + 2 (RELATED_TO extracted) = 4
+    # Total edges = 200
+    assert g_store.graph.number_of_edges() == 200
 
 
 @pytest.mark.asyncio
@@ -161,17 +170,19 @@ async def test_mixed_failure_success() -> None:
     assert len(v_store.thoughts) == 3
 
     # Verify GraphStore
-    # Should contain nodes for SUCCESS 1 and SUCCESS 2 thoughts.
-    # And the Project entity.
-    # Should NOT contain node for FAIL thought (or at least no edges if we fail before adding).
-    # Logic:
-    # 1. extract() -> 2. add thought node -> 3. add entities -> 4. add edges.
-    # If extract fails, steps 2-4 don't run.
-    # So FAIL thought should NOT have a graph node.
+    # All thoughts should now have nodes due to synchronous structural ingestion.
+    # t_fail will have structural edges (CREATED/BELONGS_TO) but NO extracted entities.
 
     # We need to find the IDs to check.
     t_fail = next(t for t in v_store.thoughts if "FAIL" in t.reasoning_trace)
     t_succ1 = next(t for t in v_store.thoughts if "SUCCESS 1" in t.reasoning_trace)
 
-    assert not g_store.graph.has_node(f"Thought:{t_fail.id}")
+    # Now t_fail SHOULD have a node (structural)
+    assert g_store.graph.has_node(f"Thought:{t_fail.id}")
     assert g_store.graph.has_node(f"Thought:{t_succ1.id}")
+
+    # Check edges
+    # t_fail should only have structural edges (2)
+    # t_succ1 should have structural (2) + extracted (2) = 4
+    assert g_store.graph.degree(f"Thought:{t_fail.id}") == 2
+    assert g_store.graph.degree(f"Thought:{t_succ1.id}") == 4
