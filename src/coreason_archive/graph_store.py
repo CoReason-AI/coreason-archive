@@ -28,7 +28,7 @@ class GraphStore:
     between the same nodes.
     """
 
-    def __init__(self, graph: Optional[nx.MultiDiGraph] = None):
+    def __init__(self, graph: Optional["nx.MultiDiGraph[Any]"] = None):
         """
         Initialize the GraphStore.
 
