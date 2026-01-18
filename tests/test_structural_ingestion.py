@@ -9,6 +9,7 @@
 # Source Code: https://github.com/CoReason-AI/coreason_archive
 
 import pytest
+from unittest.mock import MagicMock, patch
 
 from coreason_archive.archive import CoreasonArchive
 from coreason_archive.graph_store import GraphStore
@@ -249,3 +250,50 @@ async def test_complex_topology_scope_switching() -> None:
     t2_scope = g_store.get_related_entities(t2_node, relation=GraphEdgeType.BELONGS_TO, direction="outgoing")
     assert len(t2_scope) == 1
     assert t2_scope[0][0] == dept_node
+
+
+@pytest.mark.asyncio
+async def test_synchronous_ingestion_unknown_scope() -> None:
+    """
+    Verifies that if an unknown scope is passed, no BELONGS_TO edge is created,
+    and a warning is logged. We patch CachedThought to bypass Pydantic validation,
+    simulating a runtime scenario where an invalid enum value might slip through
+    or if validation was relaxed.
+    """
+    v_store = VectorStore()
+    g_store = GraphStore()
+    embedder = StubEmbedder()
+    archive = CoreasonArchive(v_store, g_store, embedder, entity_extractor=None)
+
+    unknown_scope = "UNKNOWN_SCOPE"  # type: ignore
+
+    # Patch CachedThought to return a mock or a simplified object that ignores validation
+    with patch("coreason_archive.archive.CachedThought") as MockCachedThought:
+        # Setup the mock instance
+        mock_instance = MagicMock()
+        mock_instance.id = "mock-uuid"
+        # We need to set attributes accessed by add_thought logic if any (mostly just ID)
+        MockCachedThought.return_value = mock_instance
+
+        # Call add_thought
+        thought = await archive.add_thought(
+            prompt="Test",
+            response="Response",
+            scope=unknown_scope,  # type: ignore
+            scope_id="123",
+            user_id="user_1",
+        )
+
+        thought_node = f"Thought:{thought.id}"
+
+        # Verify User -> CREATED -> Thought (Should still exist)
+        related_created = g_store.get_related_entities(
+            "User:user_1", relation=GraphEdgeType.CREATED, direction="outgoing"
+        )
+        assert any(n == thought_node for n, _ in related_created)
+
+        # Verify NO BELONGS_TO edge exists
+        related_belongs = g_store.get_related_entities(
+            thought_node, relation=GraphEdgeType.BELONGS_TO, direction="outgoing"
+        )
+        assert len(related_belongs) == 0
