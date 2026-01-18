@@ -9,12 +9,14 @@
 # Source Code: https://github.com/CoReason-AI/coreason_archive
 
 import pytest
+
 from coreason_archive.archive import CoreasonArchive
-from coreason_archive.models import MemoryScope, GraphEdgeType
-from coreason_archive.vector_store import VectorStore
 from coreason_archive.graph_store import GraphStore
-from coreason_archive.utils.stubs import StubEmbedder
+from coreason_archive.models import GraphEdgeType, MemoryScope
 from coreason_archive.utils.logger import logger
+from coreason_archive.utils.stubs import StubEmbedder
+from coreason_archive.vector_store import VectorStore
+
 
 @pytest.mark.asyncio
 async def test_synchronous_structural_ingestion_all_scopes() -> None:
@@ -46,11 +48,7 @@ async def test_synchronous_structural_ingestion_all_scopes() -> None:
 
         # Action
         thought = await archive.add_thought(
-            prompt="Test prompt",
-            response="Test response",
-            scope=scope,
-            scope_id=scope_id,
-            user_id=user_id
+            prompt="Test prompt", response="Test response", scope=scope, scope_id=scope_id, user_id=user_id
         )
 
         # Verification - Immediate Check (Synchronous)
@@ -60,11 +58,14 @@ async def test_synchronous_structural_ingestion_all_scopes() -> None:
         thought_node = f"Thought:{thought.id}"
 
         related_created = g_store.get_related_entities(user_node, relation=GraphEdgeType.CREATED, direction="outgoing")
-        assert any(n == thought_node for n, _ in related_created), \
+        assert any(n == thought_node for n, _ in related_created), (
             f"Scope {scope}: Missing CREATED edge from {user_node} to {thought_node}"
+        )
 
         # 2. Check Thought -> BELONGS_TO -> Scope Entity
-        related_belongs = g_store.get_related_entities(thought_node, relation=GraphEdgeType.BELONGS_TO, direction="outgoing")
+        related_belongs = g_store.get_related_entities(
+            thought_node, relation=GraphEdgeType.BELONGS_TO, direction="outgoing"
+        )
 
         # We expect exactly one BELONGS_TO edge to the scope node
         # (unless there are other implicit ones, but here we only expect one structural one)
@@ -74,8 +75,12 @@ async def test_synchronous_structural_ingestion_all_scopes() -> None:
                 found_scope_link = True
                 break
 
-        assert found_scope_link, \
-            f"Scope {scope}: Missing BELONGS_TO edge from {thought_node} to {expected_scope_node}. Found: {related_belongs}"
+        msg = (
+            f"Scope {scope}: Missing BELONGS_TO edge from {thought_node} to {expected_scope_node}. "
+            f"Found: {related_belongs}"
+        )
+        assert found_scope_link, msg
+
 
 @pytest.mark.asyncio
 async def test_synchronous_ingestion_null_ids() -> None:
@@ -93,8 +98,8 @@ async def test_synchronous_ingestion_null_ids() -> None:
         prompt="Test",
         response="Response",
         scope=MemoryScope.USER,
-        scope_id="", # Empty
-        user_id=""   # Empty
+        scope_id="",  # Empty
+        user_id="",  # Empty
     )
 
     thought_node = f"Thought:{thought.id}"
@@ -104,8 +109,11 @@ async def test_synchronous_ingestion_null_ids() -> None:
     assert any(n == thought_node for n, _ in related_created), "Missing link from User:Unknown"
 
     # Verify Thought -> BELONGS_TO -> User:Unknown
-    related_belongs = g_store.get_related_entities(thought_node, relation=GraphEdgeType.BELONGS_TO, direction="outgoing")
+    related_belongs = g_store.get_related_entities(
+        thought_node, relation=GraphEdgeType.BELONGS_TO, direction="outgoing"
+    )
     assert any(n == "User:Unknown" for n, _ in related_belongs), "Missing link to User:Unknown scope"
+
 
 @pytest.mark.asyncio
 async def test_synchronous_ingestion_special_characters() -> None:
@@ -124,11 +132,7 @@ async def test_synchronous_ingestion_special_characters() -> None:
     scope_id = "Project #1: Top Secret"
 
     thought = await archive.add_thought(
-        prompt="Test",
-        response="Response",
-        scope=MemoryScope.PROJECT,
-        scope_id=scope_id,
-        user_id=user_id
+        prompt="Test", response="Response", scope=MemoryScope.PROJECT, scope_id=scope_id, user_id=user_id
     )
 
     # Expected Node Names
@@ -143,12 +147,17 @@ async def test_synchronous_ingestion_special_characters() -> None:
     assert g_store.graph.has_node(expected_scope_node)
 
     # Verify User -> CREATED -> Thought
-    related_created = g_store.get_related_entities(expected_user_node, relation=GraphEdgeType.CREATED, direction="outgoing")
+    related_created = g_store.get_related_entities(
+        expected_user_node, relation=GraphEdgeType.CREATED, direction="outgoing"
+    )
     assert any(n == thought_node for n, _ in related_created)
 
     # Verify Thought -> BELONGS_TO -> Project
-    related_belongs = g_store.get_related_entities(thought_node, relation=GraphEdgeType.BELONGS_TO, direction="outgoing")
+    related_belongs = g_store.get_related_entities(
+        thought_node, relation=GraphEdgeType.BELONGS_TO, direction="outgoing"
+    )
     assert any(n == expected_scope_node for n, _ in related_belongs)
+
 
 @pytest.mark.asyncio
 async def test_complex_topology_hub_and_spoke() -> None:
@@ -174,7 +183,7 @@ async def test_complex_topology_hub_and_spoke() -> None:
             response=f"Response {i}",
             scope=MemoryScope.PROJECT,
             scope_id=project_id,
-            user_id=user_id
+            user_id=user_id,
         )
         thoughts.append(t)
 
@@ -198,6 +207,7 @@ async def test_complex_topology_hub_and_spoke() -> None:
 
     found_sources = {n for n, _ in belongs_edges}
     assert thought_nodes == found_sources
+
 
 @pytest.mark.asyncio
 async def test_complex_topology_scope_switching() -> None:
