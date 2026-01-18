@@ -151,27 +151,36 @@ class CoreasonArchive:
         logger.info(f"Added thought {thought.id} to VectorStore")
 
         # 4. Synchronous Graph Ingestion (Metadata Linking)
-        # Create structural edges: User -> CREATED -> Thought
-        # Sanitize IDs to avoid GraphStore errors on empty strings
+        # We explicitly and synchronously create the structural edges to ensure the graph
+        # topology is valid before any background processing occurs. This is critical for
+        # downstream logic like Relocation Sanitization which relies on graph connectivity.
+
+        # Sanitize IDs to avoid GraphStore errors on empty strings (though technically
+        # the caller should provide valid IDs, we must be robust).
         safe_user_id = user_id if user_id else "Unknown"
         safe_scope_id = scope_id if scope_id else "Unknown"
 
         user_node = f"User:{safe_user_id}"
         thought_node = f"Thought:{thought.id}"
+
+        # STRICT: Create User -> CREATED -> Thought
         self.graph_store.add_relationship(user_node, thought_node, GraphEdgeType.CREATED)
 
-        # Create structural edges: Thought -> BELONGS_TO -> ScopeEntity
+        # STRICT: Create Thought -> BELONGS_TO -> ScopeEntity
+        # We drop the default "Context" to strictly enforce supported scopes.
         scope_prefix = {
             MemoryScope.USER: "User",
             MemoryScope.PROJECT: "Project",
             MemoryScope.DEPARTMENT: "Department",
             MemoryScope.CLIENT: "Client",
-        }.get(scope, "Context")
+        }.get(scope)
 
         if scope_prefix:
             scope_node = f"{scope_prefix}:{safe_scope_id}"
             self.graph_store.add_relationship(thought_node, scope_node, GraphEdgeType.BELONGS_TO)
             logger.debug(f"Linked thought {thought.id} to scope {scope_node}")
+        else:
+            logger.warning(f"Could not determine scope prefix for scope: {scope}. Graph links may be incomplete.")
 
         # 5. Background Extraction
         if self.entity_extractor:
