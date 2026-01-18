@@ -2,9 +2,9 @@
 
 **Persistence layer for "Cognitive State" across the CoReason ecosystem.**
 
-[![CI/CD](https://github.com/CoReason-AI/coreason_archive/actions/workflows/ci-cd.yml/badge.svg)](https://github.com/CoReason-AI/coreason_archive/actions/workflows/ci-cd.yml)
-[![Docker](https://github.com/CoReason-AI/coreason_archive/actions/workflows/docker.yml/badge.svg)](https://github.com/CoReason-AI/coreason_archive/actions/workflows/docker.yml)
-[![codecov](https://codecov.io/gh/CoReason-AI/coreason_archive/graph/badge.svg)](https://codecov.io/gh/CoReason-AI/coreason_archive)
+[![CI/CD](https://github.com/CoReason-AI/coreason-archive/actions/workflows/ci-cd.yml/badge.svg)](https://github.com/CoReason-AI/coreason-archive/actions/workflows/ci-cd.yml)
+[![Docker](https://github.com/CoReason-AI/coreason-archive/actions/workflows/docker.yml/badge.svg)](https://github.com/CoReason-AI/coreason-archive/actions/workflows/docker.yml)
+[![codecov](https://codecov.io/gh/CoReason-AI/coreason-archive/graph/badge.svg)](https://codecov.io/gh/CoReason-AI/coreason-archive)
 ![Python](https://img.shields.io/badge/python-3.12+-blue.svg)
 ![License](https://img.shields.io/badge/license-Prosperity--3.0-green)
 [![Ruff](https://img.shields.io/endpoint?url=https://raw.githubusercontent.com/astral-sh/ruff/main/assets/badge/v2.json)](https://github.com/astral-sh/ruff)
