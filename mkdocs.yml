@@ -3,3 +3,4 @@ theme:
   name: material
 nav:
   - Home: index.md
+  - Technical Vignette: technical_vignette.md
