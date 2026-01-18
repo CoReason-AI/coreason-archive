@@ -1,0 +1,262 @@
+# Copyright (c) 2025 CoReason, Inc.
+#
+# This software is proprietary and dual-licensed.
+# Licensed under the Prosperity Public License 3.0 (the "License").
+# A copy of the license is available at https://prosperitylicense.com/versions/3.0.0
+# For details, see the LICENSE file.
+# Commercial use beyond a 30-day trial requires a separate license.
+#
+# Source Code: https://github.com/CoReason-AI/coreason_archive
+
+import json
+from pathlib import Path
+from typing import List, Tuple
+from uuid import UUID
+
+import numpy as np
+
+from coreason_archive.models import CachedThought, MemoryScope
+from coreason_archive.utils.logger import logger
+
+
+class VectorStore:
+    """
+    An in-memory Vector Store using NumPy for cosine similarity.
+    Persists data to disk as a JSON file.
+    """
+
+    def __init__(self) -> None:
+        """Initialize an empty Vector Store."""
+        self.thoughts: List[CachedThought] = []
+        # cache the vectors as a numpy array for faster search
+        # We'll rebuild this lazily or incrementally if needed,
+        # but for MVP, rebuilding on add or search is acceptable logic.
+        # To avoid complexity, we'll keep a list and convert to array on search.
+        self._vectors: List[List[float]] = []
+
+    def add(self, thought: CachedThought) -> None:
+        """
+        Adds a CachedThought to the store.
+
+        Args:
+            thought: The thought object to store.
+
+        Raises:
+            ValueError: If the vector dimension does not match existing vectors.
+        """
+        if self._vectors:
+            expected_dim = len(self._vectors[0])
+            if len(thought.vector) != expected_dim:
+                raise ValueError(f"Vector dimension mismatch: expected {expected_dim}, got {len(thought.vector)}")
+
+        self.thoughts.append(thought)
+        self._vectors.append(thought.vector)
+        logger.debug(f"Added thought {thought.id} to VectorStore.")
+
+    def delete(self, thought_id: UUID) -> bool:
+        """
+        Removes a thought by its ID.
+
+        Args:
+            thought_id: The UUID of the thought to remove.
+
+        Returns:
+            True if the thought was found and removed, False otherwise.
+        """
+        try:
+            # Find index of thought
+            index = next(i for i, t in enumerate(self.thoughts) if t.id == thought_id)
+
+            # Remove from both lists to keep them in sync
+            self.thoughts.pop(index)
+            self._vectors.pop(index)
+
+            logger.debug(f"Deleted thought {thought_id} from VectorStore.")
+            return True
+        except StopIteration:
+            logger.warning(f"Attempted to delete non-existent thought {thought_id}")
+            return False
+
+    def get_by_scope(self, scope: MemoryScope, scope_id: str) -> List[CachedThought]:
+        """
+        Retrieves all thoughts matching the given scope and scope_id.
+
+        Args:
+            scope: The memory scope (e.g., USER).
+            scope_id: The scope identifier (e.g., user_id).
+
+        Returns:
+            A list of matching CachedThought objects.
+        """
+        return [t for t in self.thoughts if t.scope == scope and t.scope_id == scope_id]
+
+    def get_by_ids(self, ids: List[UUID]) -> List[CachedThought]:
+        """
+        Retrieves thoughts matching the given list of UUIDs.
+        Ignores IDs that are not found.
+
+        Args:
+            ids: A list of UUIDs to retrieve.
+
+        Returns:
+            A list of matching CachedThought objects.
+        """
+        # Convert list to set for O(1) lookups if list is large,
+        # but for typical use cases (looping over thoughts), standard approach is fine.
+        # Since self.thoughts is a list, we must iterate.
+        # Optimisation: Index by ID? For MVP, linear scan is acceptable or set-based filter.
+        target_ids = set(ids)
+        return [t for t in self.thoughts if t.id in target_ids]
+
+    def calculate_similarity(self, thought: CachedThought, query_vector: List[float]) -> float:
+        """
+        Calculates the cosine similarity between a thought and a query vector.
+
+        Args:
+            thought: The thought object.
+            query_vector: The query embedding.
+
+        Returns:
+            Cosine similarity score (0.0 to 1.0, clamped).
+        """
+        v1 = np.array(thought.vector)
+        v2 = np.array(query_vector)
+
+        norm1 = np.linalg.norm(v1)
+        norm2 = np.linalg.norm(v2)
+
+        if norm1 == 0 or norm2 == 0:
+            return 0.0
+
+        dot_product = np.dot(v1, v2)
+        score = dot_product / (norm1 * norm2)
+        return float(score)
+
+    def mark_stale_by_urn(self, urn: str) -> int:
+        """
+        Marks thoughts as stale if they are linked to the given source URN.
+
+        Args:
+            urn: The Uniform Resource Name of the source document.
+
+        Returns:
+            The count of thoughts marked as stale.
+        """
+        count = 0
+        for thought in self.thoughts:
+            if urn in thought.source_urns and not thought.is_stale:
+                thought.is_stale = True
+                count += 1
+
+        if count > 0:
+            logger.info(f"Marked {count} thoughts as stale for URN: {urn}")
+
+        return count
+
+    def search(
+        self, query_vector: List[float], limit: int = 10, min_score: float = 0.0
+    ) -> List[Tuple[CachedThought, float]]:
+        """
+        Performs a cosine similarity search against stored thoughts.
+
+        Args:
+            query_vector: The embedding vector to search with.
+            limit: Maximum number of results to return.
+            min_score: Minimum similarity score (0.0 to 1.0) to include.
+
+        Returns:
+            A list of tuples (CachedThought, score), sorted by score descending.
+        """
+        if not self.thoughts:
+            return []
+
+        # Convert to numpy arrays
+        # Shape: (N, D)
+        candidates = np.array(self._vectors)
+        # Shape: (D,)
+        query = np.array(query_vector)
+
+        # Norm calculation
+        # axis=1 for candidates (norm of each row)
+        candidate_norms = np.linalg.norm(candidates, axis=1)
+        query_norm = np.linalg.norm(query)
+
+        # Avoid division by zero
+        if query_norm == 0:
+            logger.warning("Query vector has zero norm.")
+            return []
+
+        # Handle zero-norm candidates (rare for embeddings but possible in edge cases)
+        # We replace 0 norms with 1 (or infinity) to avoid nan, resulting in 0 score.
+        # simpler: just ignore division by zero warning or handle explicitly.
+        candidate_norms[candidate_norms == 0] = 1e-10
+
+        # Dot product
+        # (N, D) dot (D,) -> (N,)
+        dot_products = np.dot(candidates, query)
+
+        # Cosine similarity
+        scores = dot_products / (candidate_norms * query_norm)
+
+        # Zip with thoughts
+        results: List[Tuple[CachedThought, float]] = []
+        for thought, score in zip(self.thoughts, scores, strict=False):
+            # float(score) converts numpy float to python float
+            s = float(score)
+            if s >= min_score:
+                results.append((thought, s))
+
+        # Sort by score descending
+        results.sort(key=lambda x: x[1], reverse=True)
+
+        return results[:limit]
+
+    def save(self, filepath: Path) -> None:
+        """
+        Persists the list of thoughts to a JSON file.
+
+        Args:
+            filepath: Path to the output JSON file.
+
+        Raises:
+            IOError: If writing to the file fails.
+        """
+        try:
+            # Serialize list of models
+            data = [json.loads(t.model_dump_json()) for t in self.thoughts]
+
+            with open(filepath, "w", encoding="utf-8") as f:
+                json.dump(data, f, indent=2)
+
+            logger.info(f"VectorStore saved {len(self.thoughts)} thoughts to {filepath}")
+        except IOError as e:
+            logger.error(f"Failed to save VectorStore to {filepath}: {e}")
+            raise
+
+    def load(self, filepath: Path) -> None:
+        """
+        Loads thoughts from a JSON file.
+
+        Args:
+            filepath: Path to the JSON file.
+
+        Raises:
+            IOError: If reading the file fails.
+            json.JSONDecodeError: If the file content is invalid JSON.
+        """
+        if not filepath.exists():
+            logger.warning(f"VectorStore file {filepath} not found. Starting empty.")
+            return
+
+        try:
+            with open(filepath, "r", encoding="utf-8") as f:
+                data = json.load(f)
+
+            self.thoughts = [CachedThought.model_validate(item) for item in data]
+            # Rebuild vector cache
+            self._vectors = [t.vector for t in self.thoughts]
+
+            logger.info(f"VectorStore loaded {len(self.thoughts)} thoughts from {filepath}")
+        except (IOError, json.JSONDecodeError) as e:
+            logger.error(f"Failed to load VectorStore from {filepath}: {e}")
+            raise
