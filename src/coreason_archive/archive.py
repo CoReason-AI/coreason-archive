@@ -151,16 +151,19 @@ class CoreasonArchive:
         logger.info(f"Added thought {thought.id} to VectorStore")
 
         # 4. Synchronous Graph Ingestion (Metadata Linking)
-        # Create structural edges: User -> CREATED -> Thought
+        # Create structural edges to link the thought to the User and Scope.
+        # This ensures the graph is connected to the RBAC hierarchy immediately.
         # Sanitize IDs to avoid GraphStore errors on empty strings
         safe_user_id = user_id if user_id else "Unknown"
         safe_scope_id = scope_id if scope_id else "Unknown"
 
+        # Link User -> CREATED -> Thought
         user_node = f"User:{safe_user_id}"
         thought_node = f"Thought:{thought.id}"
         self.graph_store.add_relationship(user_node, thought_node, GraphEdgeType.CREATED)
 
         # Create structural edges: Thought -> BELONGS_TO -> ScopeEntity
+        # Map Scope Enum to Node Type Prefix
         scope_prefix = {
             MemoryScope.USER: "User",
             MemoryScope.PROJECT: "Project",

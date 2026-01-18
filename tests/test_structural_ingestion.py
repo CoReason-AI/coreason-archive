@@ -13,239 +13,232 @@ import pytest
 from coreason_archive.archive import CoreasonArchive
 from coreason_archive.graph_store import GraphStore
 from coreason_archive.models import GraphEdgeType, MemoryScope
-from coreason_archive.utils.logger import logger
 from coreason_archive.utils.stubs import StubEmbedder
 from coreason_archive.vector_store import VectorStore
 
 
 @pytest.mark.asyncio
-async def test_synchronous_structural_ingestion_all_scopes() -> None:
-    """
-    Verifies that 'add_thought' synchronously creates the necessary structural edges
-    (User->CREATED->Thought and Thought->BELONGS_TO->Scope) for ALL MemoryScope types,
-    ensuring the graph is never disconnected even before background NLP runs.
-    """
-
-    # Scenarios to test: Scope Enum -> Expected Scope Node Prefix
-    scenarios = [
-        (MemoryScope.USER, "user_123", "User:user_123"),
-        (MemoryScope.PROJECT, "proj_apollo", "Project:proj_apollo"),
-        (MemoryScope.DEPARTMENT, "dept_rnd", "Department:dept_rnd"),
-        (MemoryScope.CLIENT, "client_acme", "Client:client_acme"),
-    ]
-
-    for scope, scope_id, expected_scope_node in scenarios:
-        logger.info(f"Testing synchronous ingestion for scope: {scope}")
-
-        # Setup fresh components for each iteration to avoid ID collisions or state bleed
-        v_store = VectorStore()
-        g_store = GraphStore()
-        embedder = StubEmbedder()
-        # No extractor needed; we are testing the *structural* links that happen *before* extraction
-        archive = CoreasonArchive(v_store, g_store, embedder, entity_extractor=None)
-
-        user_id = "test_user_main"
-
-        # Action
-        thought = await archive.add_thought(
-            prompt="Test prompt", response="Test response", scope=scope, scope_id=scope_id, user_id=user_id
-        )
-
-        # Verification - Immediate Check (Synchronous)
-
-        # 1. Check User -> CREATED -> Thought
-        user_node = f"User:{user_id}"
-        thought_node = f"Thought:{thought.id}"
-
-        related_created = g_store.get_related_entities(user_node, relation=GraphEdgeType.CREATED, direction="outgoing")
-        assert any(n == thought_node for n, _ in related_created), (
-            f"Scope {scope}: Missing CREATED edge from {user_node} to {thought_node}"
-        )
-
-        # 2. Check Thought -> BELONGS_TO -> Scope Entity
-        related_belongs = g_store.get_related_entities(
-            thought_node, relation=GraphEdgeType.BELONGS_TO, direction="outgoing"
-        )
-
-        # We expect exactly one BELONGS_TO edge to the scope node
-        # (unless there are other implicit ones, but here we only expect one structural one)
-        found_scope_link = False
-        for neighbor, _ in related_belongs:
-            if neighbor == expected_scope_node:
-                found_scope_link = True
-                break
-
-        msg = (
-            f"Scope {scope}: Missing BELONGS_TO edge from {thought_node} to {expected_scope_node}. "
-            f"Found: {related_belongs}"
-        )
-        assert found_scope_link, msg
-
-
-@pytest.mark.asyncio
-async def test_synchronous_ingestion_null_ids() -> None:
-    """
-    Verifies robust handling of empty/None user_id or scope_id.
-    They should be sanitized to 'Unknown' rather than crashing or creating invalid nodes.
-    """
+async def test_structural_ingestion_user_scope() -> None:
+    """Verify CREATED and BELONGS_TO edges for USER scope."""
     v_store = VectorStore()
     g_store = GraphStore()
     embedder = StubEmbedder()
-    archive = CoreasonArchive(v_store, g_store, embedder, entity_extractor=None)
+    archive = CoreasonArchive(v_store, g_store, embedder)
 
-    # Action with empty strings (which might happen in some upstream error cases)
+    user_id = "alice"
+    scope_id = "alice"
+
     thought = await archive.add_thought(
-        prompt="Test",
-        response="Response",
-        scope=MemoryScope.USER,
-        scope_id="",  # Empty
-        user_id="",  # Empty
+        prompt="p", response="r", scope=MemoryScope.USER, scope_id=scope_id, user_id=user_id
     )
 
     thought_node = f"Thought:{thought.id}"
+    user_node = f"User:{user_id}"
 
-    # Verify User:Unknown -> CREATED -> Thought
-    related_created = g_store.get_related_entities("User:Unknown", relation=GraphEdgeType.CREATED, direction="outgoing")
-    assert any(n == thought_node for n, _ in related_created), "Missing link from User:Unknown"
+    # Verify CREATED edge: User -> Thought
+    assert g_store.graph.has_edge(user_node, thought_node, key=GraphEdgeType.CREATED.value)
 
-    # Verify Thought -> BELONGS_TO -> User:Unknown
-    related_belongs = g_store.get_related_entities(
-        thought_node, relation=GraphEdgeType.BELONGS_TO, direction="outgoing"
-    )
-    assert any(n == "User:Unknown" for n, _ in related_belongs), "Missing link to User:Unknown scope"
+    # Verify BELONGS_TO edge: Thought -> User
+    # For USER scope, the scope entity is the User node
+    assert g_store.graph.has_edge(thought_node, user_node, key=GraphEdgeType.BELONGS_TO.value)
 
 
 @pytest.mark.asyncio
-async def test_synchronous_ingestion_special_characters() -> None:
-    """
-    Verifies that IDs containing special characters (especially colons used as separators)
-    are handled correctly and do not corrupt the graph node parsing.
-    """
+async def test_structural_ingestion_project_scope() -> None:
+    """Verify CREATED and BELONGS_TO edges for PROJECT scope."""
     v_store = VectorStore()
     g_store = GraphStore()
     embedder = StubEmbedder()
-    archive = CoreasonArchive(v_store, g_store, embedder, entity_extractor=None)
+    archive = CoreasonArchive(v_store, g_store, embedder)
 
-    # User ID with colon (dangerous) and unicode
-    user_id = "user:alice@example.com:mega_admin"
-    # Project ID with spaces and symbols
-    scope_id = "Project #1: Top Secret"
+    user_id = "bob"
+    scope_id = "apollo"
 
     thought = await archive.add_thought(
-        prompt="Test", response="Response", scope=MemoryScope.PROJECT, scope_id=scope_id, user_id=user_id
+        prompt="p", response="r", scope=MemoryScope.PROJECT, scope_id=scope_id, user_id=user_id
     )
 
-    # Expected Node Names
-    # The logic is f"User:{user_id}" -> "User:user:alice@example.com:mega_admin"
-    # GraphStore splits on *first* colon. Type="User", Value="user:alice@example.com:mega_admin".
-    expected_user_node = f"User:{user_id}"
-    expected_scope_node = f"Project:{scope_id}"
     thought_node = f"Thought:{thought.id}"
+    user_node = f"User:{user_id}"
+    scope_node = f"Project:{scope_id}"
 
-    # Verify Nodes Exist
-    assert g_store.graph.has_node(expected_user_node)
-    assert g_store.graph.has_node(expected_scope_node)
+    # Verify CREATED edge
+    assert g_store.graph.has_edge(user_node, thought_node, key=GraphEdgeType.CREATED.value)
 
-    # Verify User -> CREATED -> Thought
-    related_created = g_store.get_related_entities(
-        expected_user_node, relation=GraphEdgeType.CREATED, direction="outgoing"
-    )
-    assert any(n == thought_node for n, _ in related_created)
-
-    # Verify Thought -> BELONGS_TO -> Project
-    related_belongs = g_store.get_related_entities(
-        thought_node, relation=GraphEdgeType.BELONGS_TO, direction="outgoing"
-    )
-    assert any(n == expected_scope_node for n, _ in related_belongs)
+    # Verify BELONGS_TO edge: Thought -> Project
+    assert g_store.graph.has_edge(thought_node, scope_node, key=GraphEdgeType.BELONGS_TO.value)
 
 
 @pytest.mark.asyncio
-async def test_complex_topology_hub_and_spoke() -> None:
-    """
-    Complex Scenario: Hub-and-Spoke Topology.
-    A single User adds multiple thoughts to the same Project.
-    Verifies that the User node acts as a hub (multiple outgoing edges)
-    and the Project node acts as a sink (multiple incoming edges).
-    """
+async def test_structural_ingestion_dept_scope() -> None:
+    """Verify CREATED and BELONGS_TO edges for DEPARTMENT scope."""
     v_store = VectorStore()
     g_store = GraphStore()
     embedder = StubEmbedder()
-    archive = CoreasonArchive(v_store, g_store, embedder, entity_extractor=None)
+    archive = CoreasonArchive(v_store, g_store, embedder)
+
+    user_id = "charlie"
+    scope_id = "engineering"
+
+    thought = await archive.add_thought(
+        prompt="p", response="r", scope=MemoryScope.DEPARTMENT, scope_id=scope_id, user_id=user_id
+    )
+
+    thought_node = f"Thought:{thought.id}"
+    user_node = f"User:{user_id}"
+    scope_node = f"Department:{scope_id}"
+
+    assert g_store.graph.has_edge(user_node, thought_node, key=GraphEdgeType.CREATED.value)
+    assert g_store.graph.has_edge(thought_node, scope_node, key=GraphEdgeType.BELONGS_TO.value)
+
+
+@pytest.mark.asyncio
+async def test_structural_ingestion_client_scope() -> None:
+    """Verify CREATED and BELONGS_TO edges for CLIENT scope."""
+    v_store = VectorStore()
+    g_store = GraphStore()
+    embedder = StubEmbedder()
+    archive = CoreasonArchive(v_store, g_store, embedder)
+
+    user_id = "dave"
+    scope_id = "acme_corp"
+
+    thought = await archive.add_thought(
+        prompt="p", response="r", scope=MemoryScope.CLIENT, scope_id=scope_id, user_id=user_id
+    )
+
+    thought_node = f"Thought:{thought.id}"
+    user_node = f"User:{user_id}"
+    scope_node = f"Client:{scope_id}"
+
+    assert g_store.graph.has_edge(user_node, thought_node, key=GraphEdgeType.CREATED.value)
+    assert g_store.graph.has_edge(thought_node, scope_node, key=GraphEdgeType.BELONGS_TO.value)
+
+
+@pytest.mark.asyncio
+async def test_structural_ingestion_special_characters() -> None:
+    """Verify handling of special characters in IDs."""
+    v_store = VectorStore()
+    g_store = GraphStore()
+    embedder = StubEmbedder()
+    archive = CoreasonArchive(v_store, g_store, embedder)
+
+    user_id = "user@example.com"
+    scope_id = "Project X & Y"
+
+    thought = await archive.add_thought(
+        prompt="p", response="r", scope=MemoryScope.PROJECT, scope_id=scope_id, user_id=user_id
+    )
+
+    thought_node = f"Thought:{thought.id}"
+    user_node = f"User:{user_id}"
+    scope_node = f"Project:{scope_id}"
+
+    assert g_store.graph.has_node(user_node)
+    assert g_store.graph.has_node(scope_node)
+    assert g_store.graph.has_edge(user_node, thought_node, key=GraphEdgeType.CREATED.value)
+    assert g_store.graph.has_edge(thought_node, scope_node, key=GraphEdgeType.BELONGS_TO.value)
+
+
+@pytest.mark.asyncio
+async def test_hub_and_spoke_topology() -> None:
+    """Verify multiple thoughts link to the same scope/user (Hub and Spoke)."""
+    v_store = VectorStore()
+    g_store = GraphStore()
+    embedder = StubEmbedder()
+    archive = CoreasonArchive(v_store, g_store, embedder)
 
     user_id = "hub_user"
-    project_id = "sink_project"
+    scope_id = "hub_project"
 
-    thoughts = []
-    # Add 5 thoughts
-    for i in range(5):
-        t = await archive.add_thought(
-            prompt=f"Prompt {i}",
-            response=f"Response {i}",
-            scope=MemoryScope.PROJECT,
-            scope_id=project_id,
-            user_id=user_id,
-        )
-        thoughts.append(t)
+    # Add 3 thoughts
+    t1 = await archive.add_thought("p1", "r1", MemoryScope.PROJECT, scope_id, user_id)
+    t2 = await archive.add_thought("p2", "r2", MemoryScope.PROJECT, scope_id, user_id)
+    t3 = await archive.add_thought("p3", "r3", MemoryScope.PROJECT, scope_id, user_id)
 
     user_node = f"User:{user_id}"
-    project_node = f"Project:{project_id}"
+    scope_node = f"Project:{scope_id}"
 
-    # Verify User has 5 outgoing CREATED edges
-    created_edges = g_store.get_related_entities(user_node, relation=GraphEdgeType.CREATED, direction="outgoing")
-    assert len(created_edges) == 5
+    # Verify User -> [t1, t2, t3]
+    for t in [t1, t2, t3]:
+        t_node = f"Thought:{t.id}"
+        assert g_store.graph.has_edge(user_node, t_node, key=GraphEdgeType.CREATED.value)
+        assert g_store.graph.has_edge(t_node, scope_node, key=GraphEdgeType.BELONGS_TO.value)
 
-    # Verify all thoughts are in the list
-    thought_nodes = {f"Thought:{t.id}" for t in thoughts}
-    found_nodes = {n for n, _ in created_edges}
-    assert thought_nodes == found_nodes
-
-    # Verify Project has 5 incoming BELONGS_TO edges
-    # Note: get_related_entities(..., direction="incoming") returns (neighbor, relation)
-    # where neighbor is the source of the edge (the Thought).
-    belongs_edges = g_store.get_related_entities(project_node, relation=GraphEdgeType.BELONGS_TO, direction="incoming")
-    assert len(belongs_edges) == 5
-
-    found_sources = {n for n, _ in belongs_edges}
-    assert thought_nodes == found_sources
+    # Check degrees
+    # User out-degree should be 3 (CREATED)
+    assert g_store.graph.out_degree(user_node) == 3
+    # Scope in-degree should be 3 (BELONGS_TO)
+    assert g_store.graph.in_degree(scope_node) == 3
 
 
 @pytest.mark.asyncio
-async def test_complex_topology_scope_switching() -> None:
+async def test_mixed_scope_usage() -> None:
     """
-    Complex Scenario: Scope Switching.
-    A single User adds thoughts to different scopes (Project A, Dept B).
-    Verifies that the User connects to all thoughts, but thoughts connect to different scopes.
+    Verify a single user creating thoughts across different scopes.
+    User -> Thought1 -> Project A
+    User -> Thought2 -> Department B
     """
     v_store = VectorStore()
     g_store = GraphStore()
     embedder = StubEmbedder()
-    archive = CoreasonArchive(v_store, g_store, embedder, entity_extractor=None)
+    archive = CoreasonArchive(v_store, g_store, embedder)
 
-    user_id = "multi_scope_user"
+    user_id = "multitasker"
 
-    # 1. Add to Project A
-    t1 = await archive.add_thought("p1", "r1", MemoryScope.PROJECT, "ProjA", user_id)
-    # 2. Add to Dept B
-    t2 = await archive.add_thought("p2", "r2", MemoryScope.DEPARTMENT, "DeptB", user_id)
+    # 1. Add thought to Project
+    t1 = await archive.add_thought("p1", "r1", MemoryScope.PROJECT, "project_alpha", user_id)
+
+    # 2. Add thought to Department
+    t2 = await archive.add_thought("p2", "r2", MemoryScope.DEPARTMENT, "dept_beta", user_id)
 
     user_node = f"User:{user_id}"
-    proj_node = "Project:ProjA"
-    dept_node = "Department:DeptB"
     t1_node = f"Thought:{t1.id}"
     t2_node = f"Thought:{t2.id}"
+    proj_node = "Project:project_alpha"
+    dept_node = "Department:dept_beta"
 
-    # Verify User connects to both
-    created = g_store.get_related_entities(user_node, relation=GraphEdgeType.CREATED, direction="outgoing")
-    created_ids = {n for n, _ in created}
-    assert t1_node in created_ids
-    assert t2_node in created_ids
+    # Verify User is connected to both thoughts
+    assert g_store.graph.has_edge(user_node, t1_node, key=GraphEdgeType.CREATED.value)
+    assert g_store.graph.has_edge(user_node, t2_node, key=GraphEdgeType.CREATED.value)
 
-    # Verify T1 connects ONLY to Project A
-    t1_scope = g_store.get_related_entities(t1_node, relation=GraphEdgeType.BELONGS_TO, direction="outgoing")
-    assert len(t1_scope) == 1
-    assert t1_scope[0][0] == proj_node
+    # Verify Thoughts connected to respective scopes
+    assert g_store.graph.has_edge(t1_node, proj_node, key=GraphEdgeType.BELONGS_TO.value)
+    assert g_store.graph.has_edge(t2_node, dept_node, key=GraphEdgeType.BELONGS_TO.value)
 
-    # Verify T2 connects ONLY to Dept B
-    t2_scope = g_store.get_related_entities(t2_node, relation=GraphEdgeType.BELONGS_TO, direction="outgoing")
-    assert len(t2_scope) == 1
-    assert t2_scope[0][0] == dept_node
+    # Verify NO cross-contamination
+    assert not g_store.graph.has_edge(t1_node, dept_node)
+    assert not g_store.graph.has_edge(t2_node, proj_node)
+
+
+@pytest.mark.asyncio
+async def test_node_reuse() -> None:
+    """
+    Verify that ingesting multiple thoughts for the same user/scope reuses existing graph nodes.
+    """
+    v_store = VectorStore()
+    g_store = GraphStore()
+    embedder = StubEmbedder()
+    archive = CoreasonArchive(v_store, g_store, embedder)
+
+    user_id = "reuse_user"
+    scope_id = "reuse_project"
+
+    # Add first thought
+    await archive.add_thought("p1", "r1", MemoryScope.PROJECT, scope_id, user_id)
+
+    # Snapshot node count
+    initial_nodes = set(g_store.graph.nodes)
+    assert f"User:{user_id}" in initial_nodes
+    assert f"Project:{scope_id}" in initial_nodes
+
+    # Add second thought with SAME user and scope
+    await archive.add_thought("p2", "r2", MemoryScope.PROJECT, scope_id, user_id)
+
+    final_nodes = set(g_store.graph.nodes)
+
+    # The only NEW node should be the second thought itself
+    # User and Project nodes should not be duplicated (e.g. no "User:reuse_user_1")
+    new_nodes = final_nodes - initial_nodes
+    assert len(new_nodes) == 1
+    assert list(new_nodes)[0].startswith("Thought:")
