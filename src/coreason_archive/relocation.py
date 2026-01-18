@@ -58,6 +58,10 @@ class CoreasonRelocationManager(RelocationManager):
         """
         Handle a change in user roles.
         Sanitizes user memories by validating them against the new role set.
+        Perform two types of checks:
+        1. RBAC Check: Ensure thought.access_roles matches new_roles.
+        2. Graph Check: Ensure entities linked to the thought do not belong to
+           restricted departments/contexts that the user no longer has access to.
         """
         logger.info(f"Processing role change for {user_id}. New roles: {new_roles}")
 
@@ -67,14 +71,46 @@ class CoreasonRelocationManager(RelocationManager):
         thoughts_to_delete = []
 
         for thought in user_thoughts:
-            # 2. Check if new roles satisfy access requirements
+            is_compliant = True
+
+            # 2. RBAC Check
             if not FederationBroker.check_access(new_roles, thought.access_roles):
                 logger.warning(
                     f"Thought {thought.id} (required: {thought.access_roles}) not accessible with new roles {new_roles}"
                 )
+                is_compliant = False
+
+            # 3. Graph Contamination Check (Active Sanitization)
+            if is_compliant and thought.entities:
+                for entity in thought.entities:
+                    # Check if entity belongs to a Department
+                    related = self.graph_store.get_related_entities(
+                        entity, relation=GraphEdgeType.BELONGS_TO, direction="outgoing"
+                    )
+                    for neighbor, _ in related:
+                        # Assuming neighbor format "Department:Name"
+                        if neighbor.startswith("Department:"):
+                            dept_name = neighbor.split(":", 1)[1]
+                            # Check if user has access to this Department based on new_roles.
+                            # We assume a naming convention or generic role check.
+                            # Convention: "dept:<name>" or "admin" grants access.
+                            required_role = f"dept:{dept_name}"
+                            has_access = "admin" in new_roles or required_role in new_roles or dept_name in new_roles
+
+                            if not has_access:
+                                logger.warning(
+                                    f"Thought {thought.id} contaminated by {entity} belonging to {neighbor}. "
+                                    f"User lacks role {required_role}."
+                                )
+                                is_compliant = False
+                                break
+                    if not is_compliant:
+                        break
+
+            if not is_compliant:
                 thoughts_to_delete.append(thought)
 
-        # 3. Delete non-compliant thoughts
+        # 4. Delete non-compliant thoughts
         for thought in thoughts_to_delete:
             self.vector_store.delete(thought.id)
             logger.info(f"Sanitized (deleted) thought {thought.id} due to role change for {user_id}")
