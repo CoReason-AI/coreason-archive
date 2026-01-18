@@ -152,7 +152,11 @@ class CoreasonArchive:
 
         # 4. Synchronous Graph Ingestion (Metadata Linking)
         # Create structural edges: User -> CREATED -> Thought
-        user_node = f"User:{user_id}"
+        # Sanitize IDs to avoid GraphStore errors on empty strings
+        safe_user_id = user_id if user_id else "Unknown"
+        safe_scope_id = scope_id if scope_id else "Unknown"
+
+        user_node = f"User:{safe_user_id}"
         thought_node = f"Thought:{thought.id}"
         self.graph_store.add_relationship(user_node, thought_node, GraphEdgeType.CREATED)
 
@@ -165,7 +169,7 @@ class CoreasonArchive:
         }.get(scope, "Context")
 
         if scope_prefix:
-            scope_node = f"{scope_prefix}:{scope_id}"
+            scope_node = f"{scope_prefix}:{safe_scope_id}"
             self.graph_store.add_relationship(thought_node, scope_node, GraphEdgeType.BELONGS_TO)
             logger.debug(f"Linked thought {thought.id} to scope {scope_node}")
 
