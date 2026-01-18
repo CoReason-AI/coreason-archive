@@ -1,3 +1,14 @@
+# Copyright (c) 2025 CoReason, Inc.
+#
+# This software is proprietary and dual-licensed.
+# Licensed under the Prosperity Public License 3.0 (the "License").
+# A copy of the license is available at https://prosperitylicense.com/versions/3.0.0
+# For details, see the LICENSE file.
+# Commercial use beyond a 30-day trial requires a separate license.
+#
+# Source Code: https://github.com/CoReason-AI/coreason_archive
+
+import asyncio
 from typing import List
 from unittest.mock import AsyncMock, Mock
 
@@ -8,7 +19,7 @@ from coreason_archive.federation import UserContext
 from coreason_archive.graph_store import GraphStore
 from coreason_archive.interfaces import Embedder, EntityExtractor
 from coreason_archive.matchmaker import MatchStrategy
-from coreason_archive.models import MemoryScope
+from coreason_archive.models import GraphEdgeType, MemoryScope
 from coreason_archive.vector_store import VectorStore
 
 
@@ -40,6 +51,10 @@ async def test_add_thought_flow() -> None:
         scope_id="user_123",
         user_id="user_123",
     )
+
+    # Wait for background processing
+    if archive._background_tasks:
+        await asyncio.gather(*archive._background_tasks)
 
     # Verify Vector Store
     assert len(v_store.thoughts) == 1
@@ -80,8 +95,11 @@ async def test_add_thought_no_extractor() -> None:
     assert len(v_store.thoughts) == 1
     # Entities empty
     assert thought.entities == []
-    # Graph store empty (except maybe if we added logic to add thought node regardless? No.)
-    assert len(g_store.graph.nodes) == 0
+    # Graph store is NOT empty now due to synchronous structural linking (User, Thought, Scope)
+    # Expect: User:user_123, Thought:<id>
+    # Since Scope is USER and scope_id is user_123, Scope entity is also User:user_123
+    assert g_store.graph.has_node("User:user_123")
+    assert g_store.graph.has_node(f"Thought:{thought.id}")
 
 
 @pytest.mark.asyncio
@@ -164,7 +182,7 @@ async def test_retrieve_flow() -> None:
     # t1 and t4 are recent USER thoughts.
 
     # Verify t2 is gone
-    ids = [t.id for t, s in results]
+    ids = [t.id for t, s, _ in results]
     assert t2.id not in ids
 
     # Verify t3 is top ranked (boosted)
@@ -262,3 +280,22 @@ async def test_smart_lookup_no_results() -> None:
 
     assert result.strategy == MatchStrategy.STANDARD_RETRIEVAL
     assert result.content["message"] == "No relevant memories found."
+
+
+@pytest.mark.asyncio
+async def test_define_entity_relationship() -> None:
+    """Test explicitly defining entity relationships for hierarchy."""
+    v_store = VectorStore()
+    g_store = GraphStore()
+    embedder = MockEmbedder()
+    archive = CoreasonArchive(v_store, g_store, embedder)
+
+    # Define a hierarchy link
+    archive.define_entity_relationship(
+        source="Project:Apollo", target="Department:RnD", relation=GraphEdgeType.BELONGS_TO
+    )
+
+    # Verify in GraphStore
+    related = g_store.get_related_entities("Project:Apollo", GraphEdgeType.BELONGS_TO, direction="outgoing")
+    assert len(related) == 1
+    assert related[0][0] == "Department:RnD"

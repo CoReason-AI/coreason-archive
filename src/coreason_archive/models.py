@@ -1,3 +1,13 @@
+# Copyright (c) 2025 CoReason, Inc.
+#
+# This software is proprietary and dual-licensed.
+# Licensed under the Prosperity Public License 3.0 (the "License").
+# A copy of the license is available at https://prosperitylicense.com/versions/3.0.0
+# For details, see the LICENSE file.
+# Commercial use beyond a 30-day trial requires a separate license.
+#
+# Source Code: https://github.com/CoReason-AI/coreason_archive
+
 from datetime import datetime
 from enum import Enum
 from typing import List
@@ -41,6 +51,7 @@ class CachedThought(BaseModel):
 
     # Metadata
     source_urns: List[str] = Field(..., description="Links to source documents in MCP")
+    is_stale: bool = Field(default=False, description="Flag indicating if the source information is outdated")
     created_at: datetime = Field(..., description="Timestamp of creation")
     ttl_seconds: int = Field(..., description="Time-to-live in seconds for decay calculation")
     access_roles: List[str] = Field(..., description="RBAC claims required to access this thought")

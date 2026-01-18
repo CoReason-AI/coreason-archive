@@ -1,3 +1,13 @@
+# Copyright (c) 2025 CoReason, Inc.
+#
+# This software is proprietary and dual-licensed.
+# Licensed under the Prosperity Public License 3.0 (the "License").
+# A copy of the license is available at https://prosperitylicense.com/versions/3.0.0
+# For details, see the LICENSE file.
+# Commercial use beyond a 30-day trial requires a separate license.
+#
+# Source Code: https://github.com/CoReason-AI/coreason_archive
+
 import json
 from pathlib import Path
 from typing import Any, List, Literal, Optional, Tuple
@@ -18,7 +28,7 @@ class GraphStore:
     between the same nodes.
     """
 
-    def __init__(self, graph: Optional[nx.MultiDiGraph] = None):
+    def __init__(self, graph: Optional["nx.MultiDiGraph[Any]"] = None):
         """
         Initialize the GraphStore.
 

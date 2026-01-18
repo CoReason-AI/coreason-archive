@@ -1,14 +1,26 @@
+# Copyright (c) 2025 CoReason, Inc.
+#
+# This software is proprietary and dual-licensed.
+# Licensed under the Prosperity Public License 3.0 (the "License").
+# A copy of the license is available at https://prosperitylicense.com/versions/3.0.0
+# For details, see the LICENSE file.
+# Commercial use beyond a 30-day trial requires a separate license.
+#
+# Source Code: https://github.com/CoReason-AI/coreason_archive
+
+import asyncio
 from datetime import datetime, timezone
-from typing import List, Optional, Tuple
+from typing import Any, List, Optional, Set, Tuple
 from uuid import uuid4
 
 from coreason_archive.federation import FederationBroker, UserContext
 from coreason_archive.graph_store import GraphStore
-from coreason_archive.interfaces import Embedder, EntityExtractor
+from coreason_archive.interfaces import Embedder, EntityExtractor, TaskRunner
 from coreason_archive.matchmaker import MatchStrategy, SearchResult
 from coreason_archive.models import CachedThought, GraphEdgeType, MemoryScope
 from coreason_archive.temporal import TemporalRanker
 from coreason_archive.utils.logger import logger
+from coreason_archive.utils.runners import AsyncIOTaskRunner
 from coreason_archive.vector_store import VectorStore
 
 
@@ -24,6 +36,7 @@ class CoreasonArchive:
         graph_store: GraphStore,
         embedder: Embedder,
         entity_extractor: Optional[EntityExtractor] = None,
+        task_runner: Optional[TaskRunner] = None,
     ) -> None:
         """
         Initialize the CoreasonArchive.
@@ -33,12 +46,55 @@ class CoreasonArchive:
             graph_store: The graph storage engine.
             embedder: Service to generate embeddings.
             entity_extractor: Service to extract entities (optional).
+            task_runner: Optional custom task runner. Defaults to AsyncIOTaskRunner.
         """
         self.vector_store = vector_store
         self.graph_store = graph_store
         self.embedder = embedder
         self.entity_extractor = entity_extractor
         self.temporal_ranker = TemporalRanker()
+        self.task_runner = task_runner or AsyncIOTaskRunner()
+        # Deprecated: _background_tasks is now managed by the default runner or custom runner
+        # We keep it for backward compatibility if any test accesses it directly,
+        # but internal logic uses task_runner.
+        self._background_tasks: Set[asyncio.Task[Any]] = set()
+        # If using default runner, expose its set for tests that inspect it
+        if isinstance(self.task_runner, AsyncIOTaskRunner):
+            self._background_tasks = self.task_runner._background_tasks
+
+    def define_entity_relationship(
+        self,
+        source: str,
+        target: str,
+        relation: GraphEdgeType,
+    ) -> None:
+        """
+        Defines a structural relationship between two entities in the GraphStore.
+        Useful for ingesting organizational hierarchy (e.g., Project:Apollo -> BELONGS_TO -> Department:RnD).
+
+        Args:
+            source: The source entity string (e.g. "Project:Apollo").
+            target: The target entity string (e.g. "Department:RnD").
+            relation: The type of relationship.
+        """
+        self.graph_store.add_relationship(source, target, relation)
+        logger.info(f"Defined relationship: {source} -[{relation.value}]-> {target}")
+
+    def invalidate_source(self, urn: str) -> int:
+        """
+        Flags all thoughts linked to the given source URN as stale.
+        This handles the integration requirement where updated source documents
+        must trigger a stale flag in the archive.
+
+        Args:
+            urn: The Uniform Resource Name of the updated source document.
+
+        Returns:
+            The number of thoughts flagged as stale.
+        """
+        count = self.vector_store.mark_stale_by_urn(urn)
+        logger.info(f"Invalidated source {urn}, affecting {count} thoughts.")
+        return count
 
     async def add_thought(
         self,
@@ -94,9 +150,35 @@ class CoreasonArchive:
         self.vector_store.add(thought)
         logger.info(f"Added thought {thought.id} to VectorStore")
 
-        # 4. Background Extraction
+        # 4. Synchronous Graph Ingestion (Metadata Linking)
+        # Create structural edges to link the thought to the User and Scope.
+        # This ensures the graph is connected to the RBAC hierarchy immediately.
+        # Sanitize IDs to avoid GraphStore errors on empty strings
+        safe_user_id = user_id if user_id else "Unknown"
+        safe_scope_id = scope_id if scope_id else "Unknown"
+
+        # Link User -> CREATED -> Thought
+        user_node = f"User:{safe_user_id}"
+        thought_node = f"Thought:{thought.id}"
+        self.graph_store.add_relationship(user_node, thought_node, GraphEdgeType.CREATED)
+
+        # Create structural edges: Thought -> BELONGS_TO -> ScopeEntity
+        # Map Scope Enum to Node Type Prefix
+        scope_prefix = {
+            MemoryScope.USER: "User",
+            MemoryScope.PROJECT: "Project",
+            MemoryScope.DEPARTMENT: "Department",
+            MemoryScope.CLIENT: "Client",
+        }.get(scope, "Context")
+
+        if scope_prefix:
+            scope_node = f"{scope_prefix}:{safe_scope_id}"
+            self.graph_store.add_relationship(thought_node, scope_node, GraphEdgeType.BELONGS_TO)
+            logger.debug(f"Linked thought {thought.id} to scope {scope_node}")
+
+        # 5. Background Extraction
         if self.entity_extractor:
-            await self.process_entities(thought, combined_text)
+            self.task_runner.run(self.process_entities(thought, combined_text))
 
         return thought
 
@@ -140,7 +222,7 @@ class CoreasonArchive:
         limit: int = 10,
         min_score: float = 0.0,
         graph_boost_factor: float = 1.1,
-    ) -> List[Tuple[CachedThought, float]]:
+    ) -> List[Tuple[CachedThought, float, dict[str, Any]]]:
         """
         Retrieves thoughts using the Scope-Link-Rank-Retrieve Loop.
         1. Vector Search (Semantic)
@@ -156,47 +238,111 @@ class CoreasonArchive:
             graph_boost_factor: Multiplier for score if structurally linked.
 
         Returns:
-            List of (CachedThought, final_score) tuples, sorted by score.
+            List of (CachedThought, final_score, metadata) tuples, sorted by score.
         """
         # 1. Vector Search
         query_vector = self.embedder.embed(query)
         # Fetch more candidates than needed to account for filtering and re-ranking
-        raw_candidates = self.vector_store.search(query_vector, limit=limit * 5, min_score=min_score)
+        # Returns List[(thought, score)]
+        vector_results = self.vector_store.search(query_vector, limit=limit * 5, min_score=min_score)
 
-        if not raw_candidates:
-            return []
+        # Initialize candidates dictionary {thought_id: (thought, base_score)}
+        candidates_map = {t.id: (t, s) for t, s in vector_results}
 
-        # 2. Federation Filter
+        # 2. Graph Sourcing (Hybrid Retrieval)
+        # Extract entities from query & context, expand graph, and find linked thoughts.
+        # This ensures we find thoughts that are structurally relevant even if semantically distant.
+
+        active_projects = {f"Project:{pid}" for pid in context.project_ids}
+        boost_entities = set(active_projects)
+
+        if self.entity_extractor:
+            try:
+                query_entities = await self.entity_extractor.extract(query)
+                if query_entities:
+                    logger.debug(f"Extracted entities from query: {query_entities}")
+                    boost_entities.update(query_entities)
+            except Exception as e:
+                logger.warning(f"Failed to extract entities from query: {e}")
+
+        # Expand ALL seed entities with 1-hop neighbors
+        seed_entities = list(boost_entities)
+        for seed_entity in seed_entities:
+            neighbors = self.graph_store.get_related_entities(seed_entity, direction="both")
+            for neighbor, _relation in neighbors:
+                boost_entities.add(neighbor)
+
+        if len(boost_entities) > len(seed_entities):
+            logger.debug(f"Expanded boost entities from {len(seed_entities)} to {len(boost_entities)}")
+
+        # Find thoughts linked to these boost_entities
+        # In the GraphStore, thoughts are nodes "Thought:<uuid>"
+        # We need to find nodes connected to boost_entities that start with "Thought:"
+        # Or simpler: Is the thought node ITSELF in boost_entities?
+        # Since we did 1-hop expansion, if a thought is linked to a seed entity (e.g., Drug:Z),
+        # then "Thought:<id>" will be in neighbors (and thus in boost_entities).
+        # So we just scan boost_entities for "Thought:..." nodes.
+
+        # We need to handle UUID conversion carefully.
+        # Python's uuid.UUID(str) works.
+        from uuid import UUID
+
+        valid_ids: List[UUID] = []
+        for entity in boost_entities:
+            if entity.startswith("Thought:"):
+                try:
+                    tid_str = entity.split("Thought:", 1)[1]
+                    valid_ids.append(UUID(tid_str))
+                except (ValueError, IndexError):
+                    continue
+
+        if valid_ids:
+            # Batch fetch from VectorStore
+            graph_thoughts = self.vector_store.get_by_ids(valid_ids)
+            logger.debug(f"Graph Sourcing found {len(graph_thoughts)} thoughts linked to context.")
+
+            for thought in graph_thoughts:
+                if thought.id not in candidates_map:
+                    # Calculate base score since it wasn't in vector results
+                    score = self.vector_store.calculate_similarity(thought, query_vector)
+                    candidates_map[thought.id] = (thought, score)
+
+        # 3. Federation Filter
         filter_fn = FederationBroker.get_filter(context)
         filtered_candidates = []
-        for thought, score in raw_candidates:
+
+        for thought, base_score in candidates_map.values():
             if filter_fn(thought):
-                filtered_candidates.append((thought, score))
+                filtered_candidates.append((thought, base_score))
 
-        # 3. Graph Boost & 4. Temporal Decay
-        scored_results: List[Tuple[CachedThought, float]] = []
+        if not filtered_candidates:
+            return []
 
-        # Pre-compute active project entities for boosting
-        # Assuming project IDs in context match "Project:{id}" format loosely?
-        # Or we strictly expect "Project:{id}".
-        # Let's handle generic case: Check if thought.entities overlaps with context-derived entities?
-        # Simpler: If thought is about a Project that is in context.project_ids.
-        active_projects = {f"Project:{pid}" for pid in context.project_ids}
+        # 4. Graph Boost & 5. Temporal Decay
+        scored_results: List[Tuple[CachedThought, float, dict[str, Any]]] = []
 
         for thought, base_score in filtered_candidates:
             current_score = base_score
+            is_boosted = False
 
             # Apply Graph Boost
-            # Boost if the thought contains entities related to active context
-            # Intersection of thought.entities and active_projects
-            if thought.entities and not active_projects.isdisjoint(thought.entities):
+            # Boost if the thought contains entities related to active context (direct or 1-hop)
+            if thought.entities and not boost_entities.isdisjoint(thought.entities):
                 current_score *= graph_boost_factor
+                is_boosted = True
                 logger.debug(f"Boosted thought {thought.id} (Graph Link)")
 
             # Apply Temporal Decay
-            final_score = TemporalRanker.adjust_score(current_score, thought.scope, thought.created_at)
+            decay_factor = TemporalRanker.calculate_decay_factor(thought.scope, thought.created_at)
+            final_score = current_score * decay_factor
 
-            scored_results.append((thought, final_score))
+            metadata = {
+                "base_score": base_score,
+                "is_boosted": is_boosted,
+                "decay_factor": decay_factor,
+            }
+
+            scored_results.append((thought, final_score, metadata))
 
         # Sort by final score
         scored_results.sort(key=lambda x: x[1], reverse=True)
@@ -209,6 +355,7 @@ class CoreasonArchive:
         context: UserContext,
         exact_threshold: float = 0.99,
         hint_threshold: float = 0.85,
+        graph_boost_factor: float = 1.1,
     ) -> SearchResult:
         """
         Orchestrates the "Lookup vs. Compute" decision logic (Matchmaker).
@@ -218,12 +365,13 @@ class CoreasonArchive:
             context: The user context.
             exact_threshold: Score above which we return full content.
             hint_threshold: Score above which we return a hint.
+            graph_boost_factor: Multiplier for score if structurally linked.
 
         Returns:
             A SearchResult object containing the strategy and content.
         """
         # 1. Retrieve candidates
-        results = await self.retrieve(query, context, limit=5, min_score=0.0)
+        results = await self.retrieve(query, context, limit=5, min_score=0.0, graph_boost_factor=graph_boost_factor)
 
         if not results:
             return SearchResult(
@@ -233,7 +381,7 @@ class CoreasonArchive:
                 content={"message": "No relevant memories found."},
             )
 
-        top_thought, top_score = results[0]
+        top_thought, top_score, top_metadata = results[0]
 
         # 2. Decide Strategy
         if top_score >= exact_threshold:
@@ -262,18 +410,21 @@ class CoreasonArchive:
                 },
             )
 
-        else:
-            # Low Score -> Standard Retrieval / Entity Hop
-            # PRD implies "Entity Hop (Graph Search)" if semantic is low?
-            # Or just fall back to standard retrieval of top K?
-            # Since we already boosted via Graph in `retrieve`, the top result IS the best guess.
-            # If it's still low score, it means neither semantic nor graph boosted it enough.
-            # However, PRD says "Entity Hop" finds relevant context that might not be semantically similar.
-            # If Graph Boost worked, it should have pushed a structurally related item up.
-            # So we return the top item(s) as "Standard Retrieval" or "Entity Hop" if it was boosted?
-            # For MVP, let's return the top thoughts as standard context.
+        elif top_metadata.get("is_boosted", False):
+            # Entity Hop: High score driven by Graph Boost
+            return SearchResult(
+                strategy=MatchStrategy.ENTITY_HOP,
+                thought=top_thought,
+                score=top_score,
+                content={
+                    "hint": f"Found structurally related context (Entity Hop). Consider: {top_thought.reasoning_trace}",
+                    "source": "entity_hop",
+                    "reasoning": top_thought.reasoning_trace,
+                },
+            )
 
-            # Construct list of top thoughts
+        else:
+            # Standard Retrieval
             return SearchResult(
                 strategy=MatchStrategy.STANDARD_RETRIEVAL,
                 thought=top_thought,
@@ -285,7 +436,7 @@ class CoreasonArchive:
                             "reasoning": t.reasoning_trace,
                             "score": s,
                         }
-                        for t, s in results
+                        for t, s, _ in results
                     ]
                 },
             )

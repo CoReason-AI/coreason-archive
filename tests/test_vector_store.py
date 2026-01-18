@@ -1,7 +1,18 @@
+# Copyright (c) 2025 CoReason, Inc.
+#
+# This software is proprietary and dual-licensed.
+# Licensed under the Prosperity Public License 3.0 (the "License").
+# A copy of the license is available at https://prosperitylicense.com/versions/3.0.0
+# For details, see the LICENSE file.
+# Commercial use beyond a 30-day trial requires a separate license.
+#
+# Source Code: https://github.com/CoReason-AI/coreason_archive
+
 import json
 from datetime import datetime
 from pathlib import Path
 from tempfile import TemporaryDirectory
+from unittest.mock import mock_open, patch
 from uuid import uuid4
 
 import numpy as np
@@ -269,3 +280,166 @@ def test_duplicate_handling() -> None:
     assert results[1][0].id == thought.id
     # Both have score 1.0
     assert pytest.approx(results[0][1], abs=1e-5) == 1.0
+
+
+def test_delete_missing_thought() -> None:
+    """Test that deleting a thought that doesn't exist returns False."""
+    store = VectorStore()
+    assert store.delete(uuid4()) is False
+
+
+def test_get_by_scope_empty() -> None:
+    """Test retrieving thoughts by scope when none match."""
+    store = VectorStore()
+    assert store.get_by_scope(MemoryScope.USER, "unknown") == []
+
+
+def test_save_error(tmp_path: Path) -> None:
+    """Test handling of save errors (e.g., permission denied)."""
+    store = VectorStore()
+    store.add(create_dummy_thought([1.0, 0.0]))
+
+    filepath = tmp_path / "store.json"
+
+    # Force IOError during open
+    with patch("builtins.open", mock_open()) as mocked_file:
+        mocked_file.side_effect = IOError("Permission denied")
+        with pytest.raises(IOError, match="Permission denied"):
+            store.save(filepath)
+
+
+def test_load_io_error(tmp_path: Path) -> None:
+    """Test handling of load errors (e.g., permission denied)."""
+    filepath = tmp_path / "store.json"
+    # Ensure file exists so checks pass
+    filepath.touch()
+
+    store = VectorStore()
+
+    # Force IOError during open
+    with patch("builtins.open", mock_open()) as mocked_file:
+        mocked_file.side_effect = IOError("Permission denied")
+        with pytest.raises(IOError, match="Permission denied"):
+            store.load(filepath)
+
+
+def test_mixed_dimensions_error() -> None:
+    """Test that adding vectors of different dimensions raises ValueError."""
+    store = VectorStore()
+    store.add(create_dummy_thought([1.0, 0.0]))  # Dim 2
+
+    # Try adding Dim 3
+    with pytest.raises(ValueError, match="Vector dimension mismatch"):
+        store.add(create_dummy_thought([1.0, 0.0, 0.0]))
+
+
+def test_relocation_scenario() -> None:
+    """
+    Simulate a relocation scenario:
+    1. Find all thoughts for a specific scope (e.g., old department).
+    2. Delete them.
+    3. Verify they are gone and others remain.
+    """
+    store = VectorStore()
+
+    # User's personal thoughts (keep)
+    t1 = create_dummy_thought([1.0], scope=MemoryScope.USER)
+    t1.scope_id = "user_1"
+    store.add(t1)
+
+    # Old department thoughts (delete)
+    t2 = create_dummy_thought([1.0], scope=MemoryScope.DEPARTMENT)
+    t2.scope_id = "dept_old"
+    store.add(t2)
+
+    t3 = create_dummy_thought([1.0], scope=MemoryScope.DEPARTMENT)
+    t3.scope_id = "dept_old"
+    store.add(t3)
+
+    # New department thoughts (keep/ignore)
+    t4 = create_dummy_thought([1.0], scope=MemoryScope.DEPARTMENT)
+    t4.scope_id = "dept_new"
+    store.add(t4)
+
+    # Step 1: Find old dept thoughts
+    to_delete = store.get_by_scope(MemoryScope.DEPARTMENT, "dept_old")
+    assert len(to_delete) == 2
+
+    # Step 2: Delete them
+    for t in to_delete:
+        store.delete(t.id)
+
+    # Step 3: Verify
+    remaining = store.thoughts
+    assert len(remaining) == 2
+    ids = {t.id for t in remaining}
+    assert t1.id in ids
+    assert t4.id in ids
+    assert t2.id not in ids
+    assert t3.id not in ids
+
+    # Verify vector consistency
+    assert len(store._vectors) == 2
+
+
+def test_search_limit_edge_cases() -> None:
+    """Test search with limit 0 and limit > total."""
+    store = VectorStore()
+    store.add(create_dummy_thought([1.0]))
+    store.add(create_dummy_thought([0.5]))
+
+    # Limit 0
+    results_zero = store.search([1.0], limit=0)
+    assert len(results_zero) == 0
+
+    # Limit > total
+    results_all = store.search([1.0], limit=100)
+    assert len(results_all) == 2
+
+
+def test_get_by_ids() -> None:
+    """Test retrieving thoughts by a list of UUIDs."""
+    store = VectorStore()
+    t1 = create_dummy_thought([1.0])
+    t2 = create_dummy_thought([0.5])
+    t3 = create_dummy_thought([0.0])
+
+    store.add(t1)
+    store.add(t2)
+    store.add(t3)
+
+    # Retrieve subset
+    found = store.get_by_ids([t1.id, t3.id])
+    assert len(found) == 2
+    ids = {t.id for t in found}
+    assert t1.id in ids
+    assert t3.id in ids
+    assert t2.id not in ids
+
+    # Retrieve with non-existent ID
+    random_id = uuid4()
+    found_mixed = store.get_by_ids([t2.id, random_id])
+    assert len(found_mixed) == 1
+    assert found_mixed[0].id == t2.id
+
+    # Retrieve empty
+    assert store.get_by_ids([]) == []
+
+
+def test_calculate_similarity() -> None:
+    """Test calculating similarity between thought and vector."""
+    store = VectorStore()
+    t1 = create_dummy_thought([1.0, 0.0])
+    # t2 unused, removed
+
+    # Orthogonal
+    sim = store.calculate_similarity(t1, [0.0, 1.0])
+    assert pytest.approx(sim, abs=1e-5) == 0.0
+
+    # Perfect match
+    sim = store.calculate_similarity(t1, [1.0, 0.0])
+    assert pytest.approx(sim, abs=1e-5) == 1.0
+
+    # Zero vector handling
+    sim = store.calculate_similarity(t1, [0.0, 0.0])
+    assert sim == 0.0
