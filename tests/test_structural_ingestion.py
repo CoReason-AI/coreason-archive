@@ -170,3 +170,75 @@ async def test_hub_and_spoke_topology() -> None:
     assert g_store.graph.out_degree(user_node) == 3
     # Scope in-degree should be 3 (BELONGS_TO)
     assert g_store.graph.in_degree(scope_node) == 3
+
+
+@pytest.mark.asyncio
+async def test_mixed_scope_usage() -> None:
+    """
+    Verify a single user creating thoughts across different scopes.
+    User -> Thought1 -> Project A
+    User -> Thought2 -> Department B
+    """
+    v_store = VectorStore()
+    g_store = GraphStore()
+    embedder = StubEmbedder()
+    archive = CoreasonArchive(v_store, g_store, embedder)
+
+    user_id = "multitasker"
+
+    # 1. Add thought to Project
+    t1 = await archive.add_thought("p1", "r1", MemoryScope.PROJECT, "project_alpha", user_id)
+
+    # 2. Add thought to Department
+    t2 = await archive.add_thought("p2", "r2", MemoryScope.DEPARTMENT, "dept_beta", user_id)
+
+    user_node = f"User:{user_id}"
+    t1_node = f"Thought:{t1.id}"
+    t2_node = f"Thought:{t2.id}"
+    proj_node = "Project:project_alpha"
+    dept_node = "Department:dept_beta"
+
+    # Verify User is connected to both thoughts
+    assert g_store.graph.has_edge(user_node, t1_node, key=GraphEdgeType.CREATED.value)
+    assert g_store.graph.has_edge(user_node, t2_node, key=GraphEdgeType.CREATED.value)
+
+    # Verify Thoughts connected to respective scopes
+    assert g_store.graph.has_edge(t1_node, proj_node, key=GraphEdgeType.BELONGS_TO.value)
+    assert g_store.graph.has_edge(t2_node, dept_node, key=GraphEdgeType.BELONGS_TO.value)
+
+    # Verify NO cross-contamination
+    assert not g_store.graph.has_edge(t1_node, dept_node)
+    assert not g_store.graph.has_edge(t2_node, proj_node)
+
+
+@pytest.mark.asyncio
+async def test_node_reuse() -> None:
+    """
+    Verify that ingesting multiple thoughts for the same user/scope reuses existing graph nodes.
+    """
+    v_store = VectorStore()
+    g_store = GraphStore()
+    embedder = StubEmbedder()
+    archive = CoreasonArchive(v_store, g_store, embedder)
+
+    user_id = "reuse_user"
+    scope_id = "reuse_project"
+
+    # Add first thought
+    await archive.add_thought("p1", "r1", MemoryScope.PROJECT, scope_id, user_id)
+
+    # Snapshot node count
+    initial_nodes = set(g_store.graph.nodes)
+    assert f"User:{user_id}" in initial_nodes
+    assert f"Project:{scope_id}" in initial_nodes
+
+    # Add second thought with SAME user and scope
+    await archive.add_thought("p2", "r2", MemoryScope.PROJECT, scope_id, user_id)
+
+    final_nodes = set(g_store.graph.nodes)
+
+    # The only NEW node should be the second thought itself
+    # User and Project nodes should not be duplicated (e.g. no "User:reuse_user_1")
+    new_nodes = final_nodes - initial_nodes
+    assert len(new_nodes) == 1
+    assert list(new_nodes)[0].startswith("Thought:")
