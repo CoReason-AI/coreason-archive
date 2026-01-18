@@ -9,11 +9,13 @@
 # Source Code: https://github.com/CoReason-AI/coreason_archive
 
 import pytest
+
 from coreason_archive.archive import CoreasonArchive
-from coreason_archive.vector_store import VectorStore
 from coreason_archive.graph_store import GraphStore
+from coreason_archive.models import GraphEdgeType, MemoryScope
 from coreason_archive.utils.stubs import StubEmbedder
-from coreason_archive.models import MemoryScope, GraphEdgeType
+from coreason_archive.vector_store import VectorStore
+
 
 @pytest.mark.asyncio
 async def test_structural_ingestion_user_scope() -> None:
@@ -27,10 +29,7 @@ async def test_structural_ingestion_user_scope() -> None:
     scope_id = "alice"
 
     thought = await archive.add_thought(
-        prompt="p", response="r",
-        scope=MemoryScope.USER,
-        scope_id=scope_id,
-        user_id=user_id
+        prompt="p", response="r", scope=MemoryScope.USER, scope_id=scope_id, user_id=user_id
     )
 
     thought_node = f"Thought:{thought.id}"
@@ -42,6 +41,7 @@ async def test_structural_ingestion_user_scope() -> None:
     # Verify BELONGS_TO edge: Thought -> User
     # For USER scope, the scope entity is the User node
     assert g_store.graph.has_edge(thought_node, user_node, key=GraphEdgeType.BELONGS_TO.value)
+
 
 @pytest.mark.asyncio
 async def test_structural_ingestion_project_scope() -> None:
@@ -55,10 +55,7 @@ async def test_structural_ingestion_project_scope() -> None:
     scope_id = "apollo"
 
     thought = await archive.add_thought(
-        prompt="p", response="r",
-        scope=MemoryScope.PROJECT,
-        scope_id=scope_id,
-        user_id=user_id
+        prompt="p", response="r", scope=MemoryScope.PROJECT, scope_id=scope_id, user_id=user_id
     )
 
     thought_node = f"Thought:{thought.id}"
@@ -70,6 +67,7 @@ async def test_structural_ingestion_project_scope() -> None:
 
     # Verify BELONGS_TO edge: Thought -> Project
     assert g_store.graph.has_edge(thought_node, scope_node, key=GraphEdgeType.BELONGS_TO.value)
+
 
 @pytest.mark.asyncio
 async def test_structural_ingestion_dept_scope() -> None:
@@ -83,10 +81,7 @@ async def test_structural_ingestion_dept_scope() -> None:
     scope_id = "engineering"
 
     thought = await archive.add_thought(
-        prompt="p", response="r",
-        scope=MemoryScope.DEPARTMENT,
-        scope_id=scope_id,
-        user_id=user_id
+        prompt="p", response="r", scope=MemoryScope.DEPARTMENT, scope_id=scope_id, user_id=user_id
     )
 
     thought_node = f"Thought:{thought.id}"
@@ -95,6 +90,7 @@ async def test_structural_ingestion_dept_scope() -> None:
 
     assert g_store.graph.has_edge(user_node, thought_node, key=GraphEdgeType.CREATED.value)
     assert g_store.graph.has_edge(thought_node, scope_node, key=GraphEdgeType.BELONGS_TO.value)
+
 
 @pytest.mark.asyncio
 async def test_structural_ingestion_client_scope() -> None:
@@ -108,10 +104,7 @@ async def test_structural_ingestion_client_scope() -> None:
     scope_id = "acme_corp"
 
     thought = await archive.add_thought(
-        prompt="p", response="r",
-        scope=MemoryScope.CLIENT,
-        scope_id=scope_id,
-        user_id=user_id
+        prompt="p", response="r", scope=MemoryScope.CLIENT, scope_id=scope_id, user_id=user_id
     )
 
     thought_node = f"Thought:{thought.id}"
@@ -120,6 +113,7 @@ async def test_structural_ingestion_client_scope() -> None:
 
     assert g_store.graph.has_edge(user_node, thought_node, key=GraphEdgeType.CREATED.value)
     assert g_store.graph.has_edge(thought_node, scope_node, key=GraphEdgeType.BELONGS_TO.value)
+
 
 @pytest.mark.asyncio
 async def test_structural_ingestion_special_characters() -> None:
@@ -133,10 +127,7 @@ async def test_structural_ingestion_special_characters() -> None:
     scope_id = "Project X & Y"
 
     thought = await archive.add_thought(
-        prompt="p", response="r",
-        scope=MemoryScope.PROJECT,
-        scope_id=scope_id,
-        user_id=user_id
+        prompt="p", response="r", scope=MemoryScope.PROJECT, scope_id=scope_id, user_id=user_id
     )
 
     thought_node = f"Thought:{thought.id}"
@@ -147,6 +138,7 @@ async def test_structural_ingestion_special_characters() -> None:
     assert g_store.graph.has_node(scope_node)
     assert g_store.graph.has_edge(user_node, thought_node, key=GraphEdgeType.CREATED.value)
     assert g_store.graph.has_edge(thought_node, scope_node, key=GraphEdgeType.BELONGS_TO.value)
+
 
 @pytest.mark.asyncio
 async def test_hub_and_spoke_topology() -> None:
