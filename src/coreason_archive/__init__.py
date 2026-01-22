@@ -12,7 +12,7 @@
 persistence layer for Cognitive State across the CoReason ecosystem
 """
 
-__version__ = "0.3.0"
+__version__ = "0.4.0"
 __author__ = "Gowtham A Rao"
 __email__ = "gowtham.rao@coreason.ai"
 
