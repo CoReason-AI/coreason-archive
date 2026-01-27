@@ -12,6 +12,8 @@ from typing import List, Tuple
 
 import pytest
 
+from coreason_identity.models import UserContext
+
 from coreason_archive.archive import CoreasonArchive
 from coreason_archive.graph_store import GraphStore
 from coreason_archive.interfaces import Embedder
@@ -108,8 +110,9 @@ async def test_full_relocation_flow_with_defined_hierarchy(
     # Using archive.add_thought is cleaner, but entities won't be populated without extractor.
     # Let's populate entities manually after add_thought for the test scenario.
 
+    user_ctx = UserContext(user_id=user_id, email="test@example.com")
     thought = await archive.add_thought(
-        prompt="Update code", response="Modifying the kernel", scope=MemoryScope.USER, scope_id=user_id, user_id=user_id
+        prompt="Update code", response="Modifying the kernel", scope=MemoryScope.USER, scope_id=user_id, user_context=user_ctx
     )
     # Manually attach entity
     thought.entities = ["Project:Zion"]

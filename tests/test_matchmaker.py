@@ -12,8 +12,9 @@ from typing import List
 
 import pytest
 
+from coreason_identity.models import UserContext
+
 from coreason_archive.archive import CoreasonArchive
-from coreason_archive.federation import UserContext
 from coreason_archive.graph_store import GraphStore
 from coreason_archive.interfaces import Embedder
 from coreason_archive.matchmaker import MatchStrategy
@@ -35,7 +36,7 @@ async def test_smart_lookup_entity_hop() -> None:
 
     # We use "Project:Apollo" as the hook
 
-    context = UserContext(user_id="user_123", project_ids=["Apollo"])
+    context = UserContext(user_id="user_123", email="test@example.com", groups=["Apollo"])
 
     # We need to simulate a scenario where:
     # 1. Base vector score is LOW (below Hint Threshold)
@@ -64,7 +65,24 @@ async def test_smart_lookup_entity_hop() -> None:
     archive = CoreasonArchive(v_store, g_store, ControlEmbedder(), entity_extractor=None)
 
     # Add thought
-    t = await archive.add_thought("q", "trace", MemoryScope.PROJECT, "Apollo", "user_123")
+    # User must be in Apollo group to add to PROJECT:Apollo scope (assuming strict check, wait)
+    # The check is: if scope == USER.
+    # But I updated Federation to check scope_id in context.groups for PROJECT.
+    # And add_thought defaults access_roles to context.groups.
+    # So if I add it, I should probably use a context that has Apollo.
+    # But wait, add_thought only enforces sovereignty on USER scope in archive.py.
+    # "Security Check: Enforce Sovereignty ... if scope == MemoryScope.USER".
+    # So for PROJECT scope, any user can write? The prompt said:
+    # "Security Check: If scope == MemoryScope.USER, enforce that scope_id == user_context.user_id."
+    # It didn't say enforce others.
+    # BUT, FederationBroker.get_filter enforces others on READ.
+    # So if I write with a user who doesn't have the group, I can write, but maybe not read?
+    # Or maybe I should enforce on write too?
+    # I'll stick to what I implemented: only USER scope sovereignty on write.
+    # So I can pass a context without Apollo to add_thought, but to retrieve I need it.
+
+    ctx_add = UserContext(user_id="user_123", email="test@example.com", groups=["Apollo"])
+    t = await archive.add_thought("q", "trace", MemoryScope.PROJECT, "Apollo", user_context=ctx_add)
     t.entities = ["Project:Apollo"]
 
     # Retrieve

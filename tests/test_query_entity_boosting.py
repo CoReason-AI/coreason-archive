@@ -13,8 +13,9 @@ from unittest.mock import AsyncMock
 
 import pytest
 
+from coreason_identity.models import UserContext
+
 from coreason_archive.archive import CoreasonArchive
-from coreason_archive.federation import UserContext
 from coreason_archive.graph_store import GraphStore
 from coreason_archive.interfaces import Embedder, EntityExtractor
 from coreason_archive.models import GraphEdgeType, MemoryScope
@@ -58,12 +59,13 @@ async def test_query_entity_boosting_hit() -> None:
 
     # 1. Add a thought about Drug Z
     # Scope is USER, unrelated to any active project, to isolate query-boosting.
+    user_ctx = UserContext(user_id="user_123", email="test@example.com")
     thought_z = await archive.add_thought(
         prompt="Effects of Drug Z?",
         response="Drug Z causes drowsiness.",
         scope=MemoryScope.USER,
         scope_id="user_123",
-        user_id="user_123",
+        user_context=user_ctx,
     )
     # Manually ensure entities are set (since add_thought uses background task)
     thought_z.entities = ["Drug:Z"]
@@ -74,12 +76,12 @@ async def test_query_entity_boosting_hit() -> None:
         response="No effects.",
         scope=MemoryScope.USER,
         scope_id="user_123",
-        user_id="user_123",
+        user_context=user_ctx,
     )
     thought_control.entities = ["Drug:Y"]
 
     # 2. Query for "Drug Z"
-    context = UserContext(user_id="user_123")
+    context = UserContext(user_id="user_123", email="test@example.com")
     # query contains "Drug Z", so MockEntityExtractor returns ["Drug:Z"]
     query = "What about Drug Z?"
 
@@ -119,18 +121,19 @@ async def test_query_entity_boosting_no_hit() -> None:
     archive = CoreasonArchive(v_store, g_store, embedder, extractor)
 
     # Thought has "Project:Apollo"
+    user_ctx = UserContext(user_id="user_123", email="test@example.com")
     thought = await archive.add_thought(
         prompt="Apollo info",
         response="Apollo is a rocket.",
         scope=MemoryScope.USER,
         scope_id="user_123",
-        user_id="user_123",
+        user_context=user_ctx,
     )
     thought.entities = ["Project:Apollo"]
 
     # Query has "Drug Z" (via mock)
     query = "Tell me about Drug Z"
-    context = UserContext(user_id="user_123")
+    context = UserContext(user_id="user_123", email="test@example.com")
 
     results = await archive.retrieve(query, context, graph_boost_factor=2.0)
 
@@ -159,8 +162,9 @@ async def test_retrieve_graceful_extractor_failure() -> None:
 
     archive = CoreasonArchive(v_store, g_store, embedder, extractor)
 
-    await archive.add_thought("q", "r", MemoryScope.USER, "user_123", "user_123")
-    context = UserContext(user_id="user_123")
+    user_ctx = UserContext(user_id="user_123", email="test@example.com")
+    await archive.add_thought("q", "r", MemoryScope.USER, "user_123", user_context=user_ctx)
+    context = UserContext(user_id="user_123", email="test@example.com")
 
     # Should not raise exception
     results = await archive.retrieve("query", context)
@@ -193,18 +197,19 @@ async def test_query_entity_expansion_boost() -> None:
     g_store.add_relationship("Drug:Z", "Concept:Cisplatin", GraphEdgeType.RELATED_TO)
 
     # 2. Add Thought with Concept:Cisplatin
+    user_ctx = UserContext(user_id="user_1", email="test@example.com")
     thought = await archive.add_thought(
         prompt="Chemo protocols",
         response="Use Cisplatin for efficacy.",
         scope=MemoryScope.USER,
         scope_id="user_1",
-        user_id="user_1",
+        user_context=user_ctx,
     )
     # Manually inject entities (skipping background extractor for determinism)
     thought.entities = ["Concept:Cisplatin"]
 
     # 3. Query for "Drug Z"
-    context = UserContext(user_id="user_1")
+    context = UserContext(user_id="user_1", email="test@example.com")
     results = await archive.retrieve(query="Tell me about Drug Z", context=context, limit=1, graph_boost_factor=2.0)
 
     assert len(results) > 0
@@ -238,12 +243,13 @@ async def test_hybrid_retrieval_low_vector_similarity() -> None:
     archive = CoreasonArchive(v_store, g_store, embedder, extractor)
 
     # 1. Add Thought T1 about "Drug Z" (but text yields orthogonal vector)
+    user_ctx = UserContext(user_id="user_1", email="test@example.com")
     t1 = await archive.add_thought(
         prompt="Different context",
         response="Some content.",
         scope=MemoryScope.USER,
         scope_id="user_1",
-        user_id="user_1",
+        user_context=user_ctx,
     )
     # T1 vector will be [0, 1]
     # Set entities manually to link it
@@ -258,7 +264,7 @@ async def test_hybrid_retrieval_low_vector_similarity() -> None:
         response="Noise.",
         scope=MemoryScope.USER,
         scope_id="user_1",
-        user_id="user_1",
+        user_context=user_ctx,
     )
     # T2 vector [0, 1]
 
@@ -267,7 +273,7 @@ async def test_hybrid_retrieval_low_vector_similarity() -> None:
     # Similarity to T1 and T2 is 0.0.
     # Vector Search with min_score=0.1 would exclude them.
     query = "query about Drug Z"
-    context = UserContext(user_id="user_1")
+    context = UserContext(user_id="user_1", email="test@example.com")
 
     # We set min_score=0.1 to prove T1 would be lost in standard retrieval
     results = await archive.retrieve(

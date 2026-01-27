@@ -28,6 +28,7 @@ def test_cached_thought_valid_creation() -> None:
         prompt_text="What is the dosing protocol?",
         reasoning_trace="Step 1: Check database...",
         final_response="Use 50mg.",
+        owner_id="user_oncologist",
         source_urns=["urn:doc:123"],
         created_at=datetime.now(),
         ttl_seconds=3600,
@@ -50,6 +51,7 @@ def test_cached_thought_invalid_scope() -> None:
             prompt_text="test",
             reasoning_trace="test",
             final_response="test",
+            owner_id="user_test",
             source_urns=[],
             created_at=datetime.now(),
             ttl_seconds=100,
@@ -69,6 +71,7 @@ def test_cached_thought_missing_fields() -> None:
             prompt_text="test",
             reasoning_trace="test",
             final_response="test",
+            owner_id="user_123",
             source_urns=[],
             created_at=datetime.now(),
             ttl_seconds=100,
@@ -95,6 +98,7 @@ def test_cached_thought_boundary_values() -> None:
         prompt_text="",  # Empty string
         reasoning_trace="",
         final_response="",
+        owner_id="user_empty",
         source_urns=[],  # Empty sources
         created_at=datetime.now(),
         ttl_seconds=0,  # Zero TTL
@@ -123,6 +127,7 @@ def test_cached_thought_complex_content() -> None:
         prompt_text="Analyze 🧪 scenario",
         reasoning_trace=complex_trace,
         final_response="Approved ✅",
+        owner_id="user_admin",
         source_urns=["urn:doc:日本語"],
         created_at=datetime.now(),
         ttl_seconds=3600,
@@ -148,6 +153,7 @@ def test_cached_thought_serialization_roundtrip() -> None:
         prompt_text="Test Prompt",
         reasoning_trace="Thinking...",
         final_response="Answer",
+        owner_id="user_client",
         source_urns=["urn:1"],
         created_at=created_at,
         ttl_seconds=60,

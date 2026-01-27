@@ -35,6 +35,7 @@ def create_dummy_thought(
         prompt_text=f"prompt {text}",
         reasoning_trace="test trace",
         final_response=f"response {text}",
+        owner_id="user_dummy",
         source_urns=[],
         created_at=datetime.now(),
         ttl_seconds=3600,

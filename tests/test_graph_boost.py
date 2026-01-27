@@ -12,8 +12,9 @@ from typing import List
 
 import pytest
 
+from coreason_identity.models import UserContext
+
 from coreason_archive.archive import CoreasonArchive
-from coreason_archive.federation import UserContext
 from coreason_archive.graph_store import GraphStore
 from coreason_archive.interfaces import Embedder
 from coreason_archive.models import GraphEdgeType, MemoryScope
@@ -44,12 +45,13 @@ async def test_indirect_graph_boosting() -> None:
     # 1. Add Thought T1 with entity 'Concept:A'
     # Use 'Project:Apollo' in the prompt/response so it might get picked up if we had an extractor,
     # but here we manually set entities to ensure we test the graph link, not text matching.
+    user_ctx = UserContext(user_id="user_1", email="test@example.com")
     t1 = await archive.add_thought(
         prompt="Discussing Concept A",
         response="Concept A is great.",
         scope=MemoryScope.USER,
         scope_id="user_1",
-        user_id="user_1",
+        user_context=user_ctx,
     )
     # Manually set entities (simulating extraction)
     t1.entities = ["Concept:A"]
@@ -60,7 +62,7 @@ async def test_indirect_graph_boosting() -> None:
         response="Concept B is okay.",
         scope=MemoryScope.USER,
         scope_id="user_1",
-        user_id="user_1",
+        user_context=user_ctx,
     )
     t2.entities = ["Concept:B"]
 
@@ -78,8 +80,8 @@ async def test_indirect_graph_boosting() -> None:
     # 4. Retrieval Context
     context = UserContext(
         user_id="user_1",
-        project_ids=["Apollo"],  # Matches "Project:Apollo"
-        roles=[],
+        email="test@example.com",
+        groups=["Apollo"],  # Matches "Project:Apollo"
     )
 
     # 5. Retrieve

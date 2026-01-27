@@ -13,8 +13,9 @@ from uuid import uuid4
 
 import pytest
 
+from coreason_identity.models import UserContext
+
 from coreason_archive.archive import CoreasonArchive
-from coreason_archive.federation import UserContext
 from coreason_archive.graph_store import GraphStore
 from coreason_archive.interfaces import Embedder, EntityExtractor
 from coreason_archive.models import GraphEdgeType, MemoryScope
@@ -67,10 +68,11 @@ async def test_orphaned_graph_node(base_archive: Tuple[VectorStore, GraphStore, 
     g_store.add_relationship("Entity:Key", f"Thought:{orphan_id}", GraphEdgeType.RELATED_TO)
 
     # 2. Add a valid thought (just to have something in store)
-    await archive.add_thought("p", "r", MemoryScope.USER, "u1", "u1")
+    user_ctx = UserContext(user_id="u1", email="test@example.com")
+    await archive.add_thought("p", "r", MemoryScope.USER, "u1", user_context=user_ctx)
 
     # 3. Retrieve
-    context = UserContext(user_id="u1")
+    context = UserContext(user_id="u1", email="test@example.com")
     await archive.retrieve("query", context)
 
     # Should succeed. Results might contain the valid thought (if vector matches default).
@@ -93,14 +95,15 @@ async def test_security_filtering_on_graph_sourced_thought(
 
     # 1. Add "Secret" Thought
     # Use "miss" to ensure low vector similarity (so it depends on Graph Sourcing)
-    secret_thought = await archive.add_thought("miss", "secret info", MemoryScope.PROJECT, "RestrictedProject", "admin")
+    admin_ctx = UserContext(user_id="admin", email="test@example.com", groups=["RestrictedProject"])
+    secret_thought = await archive.add_thought("miss", "secret info", MemoryScope.PROJECT, "RestrictedProject", user_context=admin_ctx)
     secret_thought.entities = ["Entity:Secret"]  # Manually link
 
     # Ensure Graph Link exists (since we skipped background extraction or manually set entities)
     g_store.add_relationship("Entity:Secret", f"Thought:{secret_thought.id}", GraphEdgeType.RELATED_TO)
 
     # 2. User Context: NO access to "RestrictedProject"
-    context = UserContext(user_id="u1", project_ids=["PublicProject"])
+    context = UserContext(user_id="u1", email="test@example.com", groups=["PublicProject"])
 
     # 3. Retrieve
     # min_score=0.5 -> "miss" ([0,1] vs [1,0]) sim=0.0 -> Excluded by Vector Search
@@ -123,13 +126,14 @@ async def test_duplicate_candidate_handling(base_archive: Tuple[VectorStore, Gra
 
     # 1. Add Thought
     # "match" -> High Sim -> Found by Vector Search
-    thought = await archive.add_thought("match", "content", MemoryScope.USER, "u1", "u1")
+    user_ctx = UserContext(user_id="u1", email="test@example.com")
+    thought = await archive.add_thought("match", "content", MemoryScope.USER, "u1", user_context=user_ctx)
     thought.entities = ["Entity:Dual"]
 
     # Graph Link
     g_store.add_relationship("Entity:Dual", f"Thought:{thought.id}", GraphEdgeType.RELATED_TO)
 
-    context = UserContext(user_id="u1")
+    context = UserContext(user_id="u1", email="test@example.com")
 
     # 2. Retrieve
     results = await archive.retrieve("query", context, graph_boost_factor=2.0)
@@ -157,9 +161,10 @@ async def test_zero_entity_query_fallback(base_archive: Tuple[VectorStore, Graph
     archive = CoreasonArchive(v_store, g_store, embedder, extractor)
 
     # Add thoughts
-    await archive.add_thought("match", "good", MemoryScope.USER, "u1", "u1")
+    user_ctx = UserContext(user_id="u1", email="test@example.com")
+    await archive.add_thought("match", "good", MemoryScope.USER, "u1", user_context=user_ctx)
 
-    context = UserContext(user_id="u1")
+    context = UserContext(user_id="u1", email="test@example.com")
 
     results = await archive.retrieve("query", context)
 
