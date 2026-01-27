@@ -50,6 +50,7 @@ class CachedThought(BaseModel):
     final_response: str = Field(..., description="The final answer or conclusion (The 'What')")
 
     # Metadata
+    owner_id: str = Field(..., description="ID of the user who owns this thought")
     source_urns: List[str] = Field(..., description="Links to source documents in MCP")
     is_stale: bool = Field(default=False, description="Flag indicating if the source information is outdated")
     created_at: datetime = Field(..., description="Timestamp of creation")

@@ -49,6 +49,7 @@ def create_thought(
         prompt_text=content,
         reasoning_trace=content,
         final_response=content,
+        owner_id=user_id,
         source_urns=[],
         created_at=datetime.now(timezone.utc),
         ttl_seconds=3600,

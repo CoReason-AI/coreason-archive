@@ -11,9 +11,9 @@
 from typing import List
 
 import pytest
+from coreason_identity.models import UserContext
 
 from coreason_archive.archive import CoreasonArchive
-from coreason_archive.federation import UserContext
 from coreason_archive.graph_store import GraphStore
 from coreason_archive.interfaces import Embedder
 from coreason_archive.matchmaker import MatchStrategy
@@ -72,10 +72,11 @@ async def test_precedence_high_score_boosted() -> None:
     archive = CoreasonArchive(v_store, g_store, embedder, entity_extractor=None)
 
     # Add thought linked to active project
-    t = await archive.add_thought("high_score_thought", "content", MemoryScope.PROJECT, "Apollo", "u1")
+    user_ctx = UserContext(user_id="u1", email="test@example.com", groups=["Apollo"])
+    t = await archive.add_thought("high_score_thought", "content", MemoryScope.PROJECT, "Apollo", user_context=user_ctx)
     t.entities = ["Project:Apollo"]
 
-    context = UserContext(user_id="u1", project_ids=["Apollo"])
+    context = UserContext(user_id="u1", email="test@example.com", groups=["Apollo"])
 
     # Retrieve
     # Base score 0.9. Boost 1.1 -> 0.99.
@@ -104,10 +105,11 @@ async def test_low_score_entity_hop() -> None:
     g_store = GraphStore()
     archive = CoreasonArchive(v_store, g_store, embedder, entity_extractor=None)
 
-    t = await archive.add_thought("low_score_thought", "content", MemoryScope.PROJECT, "Apollo", "u1")
+    user_ctx = UserContext(user_id="u1", email="test@example.com", groups=["Apollo"])
+    t = await archive.add_thought("low_score_thought", "content", MemoryScope.PROJECT, "Apollo", user_context=user_ctx)
     t.entities = ["Project:Apollo"]
 
-    context = UserContext(user_id="u1", project_ids=["Apollo"])
+    context = UserContext(user_id="u1", email="test@example.com", groups=["Apollo"])
 
     # Base 0.2. Boost 1.5 -> 0.3.
     # < Hint (0.85).
@@ -129,10 +131,11 @@ async def test_exact_hit_precedence() -> None:
     g_store = GraphStore()
     archive = CoreasonArchive(v_store, g_store, embedder, entity_extractor=None)
 
-    t = await archive.add_thought("exact_thought", "content", MemoryScope.PROJECT, "Apollo", "u1")
+    user_ctx = UserContext(user_id="u1", email="test@example.com", groups=["Apollo"])
+    t = await archive.add_thought("exact_thought", "content", MemoryScope.PROJECT, "Apollo", user_context=user_ctx)
     t.entities = ["Project:Apollo"]
 
-    context = UserContext(user_id="u1", project_ids=["Apollo"])
+    context = UserContext(user_id="u1", email="test@example.com", groups=["Apollo"])
 
     # Base 1.0. Boost 1.1 -> 1.1.
     # > Exact (0.99).

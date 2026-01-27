@@ -13,9 +13,9 @@ from typing import List
 from unittest.mock import AsyncMock, Mock
 
 import pytest
+from coreason_identity.models import UserContext
 
 from coreason_archive.archive import CoreasonArchive
-from coreason_archive.federation import UserContext
 from coreason_archive.graph_store import GraphStore
 from coreason_archive.interfaces import Embedder, EntityExtractor
 from coreason_archive.matchmaker import MatchStrategy
@@ -44,12 +44,13 @@ async def test_add_thought_flow() -> None:
 
     archive = CoreasonArchive(v_store, g_store, embedder, extractor)
 
+    user_ctx = UserContext(user_id="user_123", email="test@example.com")
     thought = await archive.add_thought(
         prompt="Who is Alice?",
         response="Alice is on Project Apollo.",
         scope=MemoryScope.USER,
         scope_id="user_123",
-        user_id="user_123",
+        user_context=user_ctx,
     )
 
     # Wait for background processing
@@ -83,12 +84,13 @@ async def test_add_thought_no_extractor() -> None:
 
     archive = CoreasonArchive(v_store, g_store, embedder, entity_extractor=None)
 
+    user_ctx = UserContext(user_id="user_123", email="test@example.com")
     thought = await archive.add_thought(
         prompt="Test",
         response="Test",
         scope=MemoryScope.USER,
         scope_id="user_123",
-        user_id="user_123",
+        user_context=user_ctx,
     )
 
     # Vector store has it
@@ -116,12 +118,13 @@ async def test_extraction_failure_graceful() -> None:
     archive = CoreasonArchive(v_store, g_store, embedder, extractor)
 
     # Should not raise
+    user_ctx = UserContext(user_id="user_123", email="test@example.com")
     thought = await archive.add_thought(
         prompt="Test",
         response="Test",
         scope=MemoryScope.USER,
         scope_id="user_123",
-        user_id="user_123",
+        user_context=user_ctx,
     )
 
     assert len(v_store.thoughts) == 1
@@ -152,17 +155,20 @@ async def test_retrieve_flow() -> None:
     archive = CoreasonArchive(v_store, g_store, embedder, entity_extractor=None)
 
     # Setup thoughts
+    ctx1 = UserContext(user_id="user_123", email="test@example.com", groups=["apollo"])
+    ctx2 = UserContext(user_id="user_456", email="test@example.com")
+
     # 1. User thought (Accessible)
-    t1 = await archive.add_thought("q1", "r1", MemoryScope.USER, "user_123", "user_123")
+    t1 = await archive.add_thought("q1", "r1", MemoryScope.USER, "user_123", user_context=ctx1)
     # 2. Other User thought (Inaccessible)
-    t2 = await archive.add_thought("q2", "r2", MemoryScope.USER, "user_456", "user_456")
+    t2 = await archive.add_thought("q2", "r2", MemoryScope.USER, "user_456", user_context=ctx2)
     # 3. Project thought (Accessible, Boosted)
-    t3 = await archive.add_thought("q3", "r3", MemoryScope.PROJECT, "apollo", "user_123")
+    t3 = await archive.add_thought("q3", "r3", MemoryScope.PROJECT, "apollo", user_context=ctx1)
     # Manually add entities to t3 to simulate boosting
     t3.entities = ["Project:apollo"]
 
     # 4. Old thought (Decayed)
-    await archive.add_thought("q4", "r4", MemoryScope.USER, "user_123", "user_123")
+    await archive.add_thought("q4", "r4", MemoryScope.USER, "user_123", user_context=ctx1)
     # Set t4 to be old manually (since created_at is set in add_thought)
     # Assuming we can modify it (it's in memory)
     # Actually, TemporalRanker handles decay.
@@ -170,7 +176,7 @@ async def test_retrieve_flow() -> None:
     # and boosting relative to each other if scores equal.
     # Since MockEmbedder returns constant [0.1...], all vector scores will be 1.0 (identical vectors).
 
-    context = UserContext(user_id="user_123", project_ids=["apollo"])
+    context = UserContext(user_id="user_123", email="test@example.com", groups=["apollo"])
 
     # Execute Retrieve
     results = await archive.retrieve("query", context, limit=10)
@@ -204,7 +210,7 @@ async def test_retrieve_empty() -> None:
     embedder = MockEmbedder()
     archive = CoreasonArchive(v_store, g_store, embedder)
 
-    context = UserContext(user_id="user_123")
+    context = UserContext(user_id="user_123", email="test@example.com")
     results = await archive.retrieve("test", context)
     assert results == []
 
@@ -217,11 +223,11 @@ async def test_smart_lookup_exact_hit() -> None:
     embedder = MockEmbedder()
     archive = CoreasonArchive(v_store, g_store, embedder)
 
-    await archive.add_thought("q", "r", MemoryScope.USER, "user_123", "user_123")
-    context = UserContext(user_id="user_123")
+    ctx = UserContext(user_id="user_123", email="test@example.com")
+    await archive.add_thought("q", "r", MemoryScope.USER, "user_123", user_context=ctx)
 
     # With identical vector, score is 1.0. Default threshold is 0.99.
-    result = await archive.smart_lookup("q", context)
+    result = await archive.smart_lookup("q", ctx)
 
     assert result.strategy == MatchStrategy.EXACT_HIT
     assert result.content["source"] == "cache_hit"
@@ -236,13 +242,13 @@ async def test_smart_lookup_semantic_hint() -> None:
     embedder = MockEmbedder()
     archive = CoreasonArchive(v_store, g_store, embedder)
 
-    await archive.add_thought("q", "trace", MemoryScope.USER, "user_123", "user_123")
-    context = UserContext(user_id="user_123")
+    ctx = UserContext(user_id="user_123", email="test@example.com")
+    await archive.add_thought("q", "trace", MemoryScope.USER, "user_123", user_context=ctx)
 
     # Force threshold higher than 1.0 to fail exact match (not possible naturally unless boosted)
     # But since MockEmbedder gives 1.0, and decay/boost might alter it.
     # Let's set exact_threshold to 1.1 (unreachable without boost) and hint to 0.9.
-    result = await archive.smart_lookup("q", context, exact_threshold=1.1, hint_threshold=0.9)
+    result = await archive.smart_lookup("q", ctx, exact_threshold=1.1, hint_threshold=0.9)
 
     assert result.strategy == MatchStrategy.SEMANTIC_HINT
     assert "hint" in result.content
@@ -257,11 +263,11 @@ async def test_smart_lookup_standard() -> None:
     embedder = MockEmbedder()
     archive = CoreasonArchive(v_store, g_store, embedder)
 
-    await archive.add_thought("q", "r", MemoryScope.USER, "user_123", "user_123")
-    context = UserContext(user_id="user_123")
+    ctx = UserContext(user_id="user_123", email="test@example.com")
+    await archive.add_thought("q", "r", MemoryScope.USER, "user_123", user_context=ctx)
 
     # Set both thresholds very high
-    result = await archive.smart_lookup("q", context, exact_threshold=2.0, hint_threshold=2.0)
+    result = await archive.smart_lookup("q", ctx, exact_threshold=2.0, hint_threshold=2.0)
 
     assert result.strategy == MatchStrategy.STANDARD_RETRIEVAL
     assert "top_thoughts" in result.content
@@ -274,7 +280,7 @@ async def test_smart_lookup_no_results() -> None:
     g_store = GraphStore()
     embedder = MockEmbedder()
     archive = CoreasonArchive(v_store, g_store, embedder)
-    context = UserContext(user_id="user_123")
+    context = UserContext(user_id="user_123", email="test@example.com")
 
     result = await archive.smart_lookup("q", context)
 

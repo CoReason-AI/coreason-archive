@@ -11,7 +11,9 @@
 from datetime import datetime
 from uuid import uuid4
 
-from coreason_archive.federation import FederationBroker, UserContext
+from coreason_identity.models import UserContext
+
+from coreason_archive.federation import FederationBroker
 from coreason_archive.models import CachedThought, MemoryScope
 
 
@@ -19,6 +21,7 @@ def create_thought(
     scope: MemoryScope,
     scope_id: str,
     access_roles: list[str] | None = None,
+    owner_id: str = "user_123",
 ) -> CachedThought:
     if access_roles is None:
         access_roles = []
@@ -31,6 +34,7 @@ def create_thought(
         prompt_text="test",
         reasoning_trace="test",
         final_response="test",
+        owner_id=owner_id,
         source_urns=[],
         created_at=datetime.now(),
         ttl_seconds=3600,
@@ -40,7 +44,7 @@ def create_thought(
 
 def test_user_scope_access() -> None:
     """Test access to USER scoped memories."""
-    context = UserContext(user_id="user_123")
+    context = UserContext(user_id="user_123", email="test@example.com")
     broker = FederationBroker()
     filter_func = broker.get_filter(context)
 
@@ -55,7 +59,7 @@ def test_user_scope_access() -> None:
 
 def test_dept_scope_access() -> None:
     """Test access to DEPT scoped memories."""
-    context = UserContext(user_id="user_123", dept_ids=["dept_it", "dept_hr"])
+    context = UserContext(user_id="user_123", email="test@example.com", groups=["dept_it", "dept_hr"])
     broker = FederationBroker()
     filter_func = broker.get_filter(context)
 
@@ -70,7 +74,7 @@ def test_dept_scope_access() -> None:
 
 def test_project_scope_access() -> None:
     """Test access to PROJECT scoped memories."""
-    context = UserContext(user_id="user_123", project_ids=["proj_alpha"])
+    context = UserContext(user_id="user_123", email="test@example.com", groups=["proj_alpha"])
     broker = FederationBroker()
     filter_func = broker.get_filter(context)
 
@@ -85,7 +89,7 @@ def test_project_scope_access() -> None:
 
 def test_client_scope_access() -> None:
     """Test access to CLIENT scoped memories."""
-    context = UserContext(user_id="user_123", client_ids=["client_x"])
+    context = UserContext(user_id="user_123", email="test@example.com", groups=["client_x"])
     broker = FederationBroker()
     filter_func = broker.get_filter(context)
 
@@ -100,8 +104,8 @@ def test_client_scope_access() -> None:
 
 def test_rbac_access() -> None:
     """Test Role-Based Access Control logic."""
-    # User has 'admin' role
-    context = UserContext(user_id="user_123", roles=["admin"])
+    # User has 'admin' role (in groups)
+    context = UserContext(user_id="user_123", email="test@example.com", groups=["admin"])
     broker = FederationBroker()
     filter_func = broker.get_filter(context)
 
@@ -124,7 +128,8 @@ def test_rbac_access() -> None:
 
 def test_rbac_and_scope_combined() -> None:
     """Test combination of Scope and RBAC."""
-    context = UserContext(user_id="user_123", dept_ids=["dept_it"], roles=["intern"])
+    # User in dept_it and has intern role (all in groups)
+    context = UserContext(user_id="user_123", email="test@example.com", groups=["dept_it", "intern"])
     broker = FederationBroker()
     filter_func = broker.get_filter(context)
 

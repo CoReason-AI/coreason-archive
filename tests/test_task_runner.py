@@ -13,6 +13,7 @@ from typing import Any, Coroutine, List
 from unittest.mock import MagicMock
 
 import pytest
+from coreason_identity.models import UserContext
 
 from coreason_archive.archive import CoreasonArchive
 from coreason_archive.graph_store import GraphStore
@@ -172,7 +173,10 @@ async def test_archive_uses_injected_runner() -> None:
 
     archive = CoreasonArchive(v_store, g_store, embedder, entity_extractor=extractor, task_runner=mock_runner)
 
-    await archive.add_thought(prompt="Test", response="Test", scope=MemoryScope.USER, scope_id="user", user_id="user")
+    user_ctx = UserContext(user_id="user", email="test@example.com")
+    await archive.add_thought(
+        prompt="Test", response="Test", scope=MemoryScope.USER, scope_id="user", user_context=user_ctx
+    )
 
     # Verify task was submitted to mock runner
     assert len(mock_runner.submitted_tasks) == 1

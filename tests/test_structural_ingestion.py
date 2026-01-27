@@ -9,6 +9,7 @@
 # Source Code: https://github.com/CoReason-AI/coreason_archive
 
 import pytest
+from coreason_identity.models import UserContext
 
 from coreason_archive.archive import CoreasonArchive
 from coreason_archive.graph_store import GraphStore
@@ -28,8 +29,9 @@ async def test_structural_ingestion_user_scope() -> None:
     user_id = "alice"
     scope_id = "alice"
 
+    user_ctx = UserContext(user_id=user_id, email="test@example.com")
     thought = await archive.add_thought(
-        prompt="p", response="r", scope=MemoryScope.USER, scope_id=scope_id, user_id=user_id
+        prompt="p", response="r", scope=MemoryScope.USER, scope_id=scope_id, user_context=user_ctx
     )
 
     thought_node = f"Thought:{thought.id}"
@@ -54,8 +56,9 @@ async def test_structural_ingestion_project_scope() -> None:
     user_id = "bob"
     scope_id = "apollo"
 
+    user_ctx = UserContext(user_id=user_id, email="test@example.com")
     thought = await archive.add_thought(
-        prompt="p", response="r", scope=MemoryScope.PROJECT, scope_id=scope_id, user_id=user_id
+        prompt="p", response="r", scope=MemoryScope.PROJECT, scope_id=scope_id, user_context=user_ctx
     )
 
     thought_node = f"Thought:{thought.id}"
@@ -80,8 +83,9 @@ async def test_structural_ingestion_dept_scope() -> None:
     user_id = "charlie"
     scope_id = "engineering"
 
+    user_ctx = UserContext(user_id=user_id, email="test@example.com")
     thought = await archive.add_thought(
-        prompt="p", response="r", scope=MemoryScope.DEPARTMENT, scope_id=scope_id, user_id=user_id
+        prompt="p", response="r", scope=MemoryScope.DEPARTMENT, scope_id=scope_id, user_context=user_ctx
     )
 
     thought_node = f"Thought:{thought.id}"
@@ -103,8 +107,9 @@ async def test_structural_ingestion_client_scope() -> None:
     user_id = "dave"
     scope_id = "acme_corp"
 
+    user_ctx = UserContext(user_id=user_id, email="test@example.com")
     thought = await archive.add_thought(
-        prompt="p", response="r", scope=MemoryScope.CLIENT, scope_id=scope_id, user_id=user_id
+        prompt="p", response="r", scope=MemoryScope.CLIENT, scope_id=scope_id, user_context=user_ctx
     )
 
     thought_node = f"Thought:{thought.id}"
@@ -126,8 +131,9 @@ async def test_structural_ingestion_special_characters() -> None:
     user_id = "user@example.com"
     scope_id = "Project X & Y"
 
+    user_ctx = UserContext(user_id=user_id, email="test@example.com")
     thought = await archive.add_thought(
-        prompt="p", response="r", scope=MemoryScope.PROJECT, scope_id=scope_id, user_id=user_id
+        prompt="p", response="r", scope=MemoryScope.PROJECT, scope_id=scope_id, user_context=user_ctx
     )
 
     thought_node = f"Thought:{thought.id}"
@@ -152,9 +158,10 @@ async def test_hub_and_spoke_topology() -> None:
     scope_id = "hub_project"
 
     # Add 3 thoughts
-    t1 = await archive.add_thought("p1", "r1", MemoryScope.PROJECT, scope_id, user_id)
-    t2 = await archive.add_thought("p2", "r2", MemoryScope.PROJECT, scope_id, user_id)
-    t3 = await archive.add_thought("p3", "r3", MemoryScope.PROJECT, scope_id, user_id)
+    user_ctx = UserContext(user_id=user_id, email="test@example.com")
+    t1 = await archive.add_thought("p1", "r1", MemoryScope.PROJECT, scope_id, user_context=user_ctx)
+    t2 = await archive.add_thought("p2", "r2", MemoryScope.PROJECT, scope_id, user_context=user_ctx)
+    t3 = await archive.add_thought("p3", "r3", MemoryScope.PROJECT, scope_id, user_context=user_ctx)
 
     user_node = f"User:{user_id}"
     scope_node = f"Project:{scope_id}"
@@ -185,12 +192,13 @@ async def test_mixed_scope_usage() -> None:
     archive = CoreasonArchive(v_store, g_store, embedder)
 
     user_id = "multitasker"
+    user_ctx = UserContext(user_id=user_id, email="test@example.com")
 
     # 1. Add thought to Project
-    t1 = await archive.add_thought("p1", "r1", MemoryScope.PROJECT, "project_alpha", user_id)
+    t1 = await archive.add_thought("p1", "r1", MemoryScope.PROJECT, "project_alpha", user_context=user_ctx)
 
     # 2. Add thought to Department
-    t2 = await archive.add_thought("p2", "r2", MemoryScope.DEPARTMENT, "dept_beta", user_id)
+    t2 = await archive.add_thought("p2", "r2", MemoryScope.DEPARTMENT, "dept_beta", user_context=user_ctx)
 
     user_node = f"User:{user_id}"
     t1_node = f"Thought:{t1.id}"
@@ -223,9 +231,10 @@ async def test_node_reuse() -> None:
 
     user_id = "reuse_user"
     scope_id = "reuse_project"
+    user_ctx = UserContext(user_id=user_id, email="test@example.com")
 
     # Add first thought
-    await archive.add_thought("p1", "r1", MemoryScope.PROJECT, scope_id, user_id)
+    await archive.add_thought("p1", "r1", MemoryScope.PROJECT, scope_id, user_context=user_ctx)
 
     # Snapshot node count
     initial_nodes = set(g_store.graph.nodes)
@@ -233,7 +242,7 @@ async def test_node_reuse() -> None:
     assert f"Project:{scope_id}" in initial_nodes
 
     # Add second thought with SAME user and scope
-    await archive.add_thought("p2", "r2", MemoryScope.PROJECT, scope_id, user_id)
+    await archive.add_thought("p2", "r2", MemoryScope.PROJECT, scope_id, user_context=user_ctx)
 
     final_nodes = set(g_store.graph.nodes)
 
