@@ -14,9 +14,10 @@ import json
 from pathlib import Path
 from typing import Optional
 
+from coreason_identity.models import UserContext
+
 from coreason_archive.archive import CoreasonArchive
 from coreason_archive.extractors import RegexEntityExtractor
-from coreason_archive.federation import UserContext
 from coreason_archive.graph_store import GraphStore
 from coreason_archive.models import MemoryScope
 from coreason_archive.utils.logger import logger
@@ -68,6 +69,15 @@ async def add_thought(
     mem_scope = MemoryScope(scope)
     scope_id = user_id if mem_scope == MemoryScope.USER else (project or "default")
 
+    # Construct minimal UserContext for CLI
+    # If scope is PROJECT, user must be in that group for the check to pass
+    groups = []
+    if mem_scope in (MemoryScope.PROJECT, MemoryScope.DEPARTMENT, MemoryScope.CLIENT):
+        groups.append(scope_id)
+
+    # CLI doesn't provide email, so we mock it
+    user_context = UserContext(user_id=user_id, email=f"{user_id}@coreason.ai", groups=groups)
+
     logger.info(f"Adding thought for user {user_id} in scope {scope}...")
 
     thought = await archive.add_thought(
@@ -75,7 +85,7 @@ async def add_thought(
         response=response,
         scope=mem_scope,
         scope_id=scope_id,
-        user_id=user_id,
+        user_context=user_context,
         access_roles=[],  # Default public within scope
     )
 
@@ -102,7 +112,11 @@ async def search_thought(archive: CoreasonArchive, query: str, user_id: str, pro
 
     # Construct Context
     # For CLI demo, we assume user has access to the project if provided
-    context = UserContext(user_id=user_id, project_ids=[project] if project else [], dept_ids=[], roles=[])
+    groups = []
+    if project:
+        groups.append(project)
+
+    context = UserContext(user_id=user_id, email=f"{user_id}@coreason.ai", groups=groups)
 
     result = await archive.smart_lookup(query, context)
 

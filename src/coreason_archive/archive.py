@@ -13,7 +13,9 @@ from datetime import datetime, timezone
 from typing import Any, List, Optional, Set, Tuple
 from uuid import uuid4
 
-from coreason_archive.federation import FederationBroker, UserContext
+from coreason_identity.models import UserContext
+
+from coreason_archive.federation import FederationBroker
 from coreason_archive.graph_store import GraphStore
 from coreason_archive.interfaces import Embedder, EntityExtractor, TaskRunner
 from coreason_archive.matchmaker import MatchStrategy, SearchResult
@@ -102,7 +104,7 @@ class CoreasonArchive:
         response: str,
         scope: MemoryScope,
         scope_id: str,
-        user_id: str,
+        user_context: UserContext,
         access_roles: Optional[List[str]] = None,
         source_urns: Optional[List[str]] = None,
         ttl_seconds: int = 86400,
@@ -118,7 +120,7 @@ class CoreasonArchive:
             response: The system's response/reasoning.
             scope: The memory scope (USER, DEPT, etc.).
             scope_id: The identifier for the scope.
-            user_id: The user creating the thought.
+            user_context: The context of the user creating the thought.
             access_roles: RBAC roles required to access.
             source_urns: Links to source documents.
             ttl_seconds: Time to live for decay (default 1 day).
@@ -126,6 +128,13 @@ class CoreasonArchive:
         Returns:
             The created CachedThought.
         """
+        # Security Check: Enforce Sovereignty
+        if scope == MemoryScope.USER:
+            if scope_id != user_context.user_id:
+                raise ValueError(
+                    f"Sovereignty Violation: User {user_context.user_id} cannot write to USER scope of {scope_id}"
+                )
+
         # 1. Vectorize
         combined_text = f"{prompt}\n{response}"
         vector = self.embedder.embed(combined_text)
@@ -140,10 +149,11 @@ class CoreasonArchive:
             prompt_text=prompt,
             reasoning_trace=response,
             final_response=response,
+            owner_id=user_context.user_id,
             source_urns=source_urns or [],
             created_at=datetime.now(timezone.utc),
             ttl_seconds=ttl_seconds,
-            access_roles=access_roles or [],
+            access_roles=access_roles or user_context.groups,
         )
 
         # 3. Store in VectorStore
@@ -154,7 +164,7 @@ class CoreasonArchive:
         # Create structural edges to link the thought to the User and Scope.
         # This ensures the graph is connected to the RBAC hierarchy immediately.
         # Sanitize IDs to avoid GraphStore errors on empty strings
-        safe_user_id = user_id if user_id else "Unknown"
+        safe_user_id = user_context.user_id if user_context.user_id else "Unknown"
         safe_scope_id = scope_id if scope_id else "Unknown"
 
         # Link User -> CREATED -> Thought
@@ -253,8 +263,9 @@ class CoreasonArchive:
         # Extract entities from query & context, expand graph, and find linked thoughts.
         # This ensures we find thoughts that are structurally relevant even if semantically distant.
 
-        active_projects = {f"Project:{pid}" for pid in context.project_ids}
-        boost_entities = set(active_projects)
+        # Boost based on all groups as potential projects or departments
+        boost_entities = {f"Project:{gid}" for gid in context.groups}
+        boost_entities.update({f"Department:{gid}" for gid in context.groups})
 
         if self.entity_extractor:
             try:

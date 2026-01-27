@@ -1,6 +1,6 @@
 [tool.poetry]
 name = "coreason_archive"
-version = "0.4.1"
+version = "0.5.0"
 description = "persistence layer for Cognitive State across the CoReason ecosystem"
 authors = ["Gowtham A Rao <gowtham.rao@coreason.ai>"]
 license = "Prosperity-3.0"
@@ -13,6 +13,8 @@ loguru = "^0.7.2"
 pydantic = "^2.7.0"
 networkx = "^3.4"
 numpy = ">=1.26.0"
+coreason-identity = "*"
+anyio = "^4.12.1"
 
 [tool.poetry.group.dev.dependencies]
 pytest = "^8.2.2"
