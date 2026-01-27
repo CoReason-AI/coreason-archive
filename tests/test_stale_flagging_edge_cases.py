@@ -13,9 +13,9 @@ from unittest.mock import MagicMock
 from uuid import uuid4
 
 import pytest
+from coreason_identity.models import UserContext
 
 from coreason_archive.archive import CoreasonArchive
-from coreason_archive.federation import UserContext
 from coreason_archive.models import CachedThought, MemoryScope
 from coreason_archive.vector_store import VectorStore
 
@@ -31,6 +31,7 @@ def base_thought() -> CachedThought:
         prompt_text="test",
         reasoning_trace="trace",
         final_response="resp",
+        owner_id="user_1",
         source_urns=[],
         created_at=datetime.now(timezone.utc),
         ttl_seconds=3600,
@@ -107,11 +108,17 @@ async def test_complex_retrieval_flow(base_thought: CachedThought) -> None:
     archive = CoreasonArchive(vector_store=store, graph_store=graph, embedder=embedder)
 
     # Add thoughts
+    user_ctx = UserContext(user_id="u1", email="test@example.com")
     t1 = await archive.add_thought(
-        prompt="foo", response="bar", scope=MemoryScope.USER, scope_id="u1", user_id="u1", source_urns=["urn:doc:1"]
+        prompt="foo",
+        response="bar",
+        scope=MemoryScope.USER,
+        scope_id="u1",
+        user_context=user_ctx,
+        source_urns=["urn:doc:1"],
     )
 
-    context = UserContext(user_id="u1", roles=[])
+    context = UserContext(user_id="u1", email="test@example.com")
 
     # 1. First Retrieval
     results_fresh = await archive.retrieve("foo", context)

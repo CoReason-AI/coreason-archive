@@ -10,22 +10,9 @@
 
 from typing import Callable, List
 
-from pydantic import BaseModel, Field
+from coreason_identity.models import UserContext
 
 from coreason_archive.models import CachedThought, MemoryScope
-
-
-class UserContext(BaseModel):
-    """
-    Represents the security context of the user making a request.
-    Includes their identity, group memberships, and assigned roles.
-    """
-
-    user_id: str = Field(..., description="Unique identifier of the user")
-    dept_ids: List[str] = Field(default_factory=list, description="List of Department IDs the user belongs to")
-    project_ids: List[str] = Field(default_factory=list, description="List of Project IDs the user belongs to")
-    client_ids: List[str] = Field(default_factory=list, description="List of Client IDs the user belongs to")
-    roles: List[str] = Field(default_factory=list, description="List of RBAC roles/claims assigned to the user")
 
 
 class FederationBroker:
@@ -71,20 +58,13 @@ class FederationBroker:
                 if thought.scope_id != context.user_id:
                     return False
 
-            elif thought.scope == MemoryScope.DEPARTMENT:
-                if thought.scope_id not in context.dept_ids:
-                    return False
-
-            elif thought.scope == MemoryScope.PROJECT:
-                if thought.scope_id not in context.project_ids:
-                    return False
-
-            elif thought.scope == MemoryScope.CLIENT:
-                if thought.scope_id not in context.client_ids:
+            elif thought.scope in (MemoryScope.DEPARTMENT, MemoryScope.PROJECT, MemoryScope.CLIENT):
+                # Check if the scope_id is present in the user's groups
+                if thought.scope_id not in context.groups:
                     return False
 
             # 2. RBAC Check
-            if not FederationBroker.check_access(context.roles, thought.access_roles):
+            if not FederationBroker.check_access(context.groups, thought.access_roles):
                 return False
 
             return True

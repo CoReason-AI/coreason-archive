@@ -13,9 +13,9 @@ from typing import List
 from uuid import uuid4
 
 import pytest
+from coreason_identity.models import UserContext
 
 from coreason_archive.archive import CoreasonArchive
-from coreason_archive.federation import UserContext
 from coreason_archive.graph_store import GraphStore
 from coreason_archive.interfaces import Embedder
 from coreason_archive.matchmaker import MatchStrategy
@@ -43,6 +43,7 @@ def create_thought(
     scope_id: str,
     created_at: datetime,
     entities: list[str] | None = None,
+    owner_id: str = "Alice",
 ) -> CachedThought:
     """Helper to manually create thoughts."""
     return CachedThought(
@@ -54,6 +55,7 @@ def create_thought(
         prompt_text=f"prompt {id_str}",
         reasoning_trace=f"trace {id_str}",
         final_response=f"response {id_str}",
+        owner_id=owner_id,
         source_urns=[],
         created_at=created_at,
         ttl_seconds=86400 * 365,  # Long TTL
@@ -114,9 +116,9 @@ async def test_full_hybrid_loop() -> None:
     # Context
     context = UserContext(
         user_id="Alice",
-        dept_ids=["Dept-Eng"],
+        email="test@example.com",
         # context project ID should be "Apollo" so the constructed entity is "Project:Apollo"
-        project_ids=["Apollo"],
+        groups=["Dept-Eng", "Apollo"],
     )
 
     # Execute Retrieve
@@ -177,7 +179,7 @@ async def test_matchmaker_misconfiguration() -> None:
     t = create_thought("X", vec_07, MemoryScope.USER, "u1", datetime.now(timezone.utc))
     store.add(t)
 
-    context = UserContext(user_id="u1")
+    context = UserContext(user_id="u1", email="test@example.com")
 
     # Exact Threshold 0.5, Hint 0.9
     # Score is ~0.7.
@@ -195,14 +197,14 @@ async def test_empty_context_edge_case() -> None:
     archive = CoreasonArchive(store, GraphStore(), embedder)
 
     # 1. Public user thought (Wait, user scope always requires matching ID)
-    t1 = create_thought("1", [1.0] * 1536, MemoryScope.USER, "other", datetime.now(timezone.utc))
+    t1 = create_thought("1", [1.0] * 1536, MemoryScope.USER, "other", datetime.now(timezone.utc), owner_id="other")
     store.add(t1)
 
     # 2. Dept thought
     t2 = create_thought("2", [1.0] * 1536, MemoryScope.DEPARTMENT, "dept", datetime.now(timezone.utc))
     store.add(t2)
 
-    context = UserContext(user_id="lonely_user")  # No depts, no projects
+    context = UserContext(user_id="lonely_user", email="test@example.com")  # No depts, no projects
 
     results = await archive.retrieve("q", context)
 
@@ -221,7 +223,7 @@ async def test_future_date_decay() -> None:
     t = create_thought("F", [1.0] * 1536, MemoryScope.USER, "u1", future)
     store.add(t)
 
-    context = UserContext(user_id="u1")
+    context = UserContext(user_id="u1", email="test@example.com")
     results = await archive.retrieve("q", context)
 
     assert len(results) == 1
@@ -262,7 +264,7 @@ async def test_smart_lookup_reordering_scenario() -> None:
     t_b = create_thought("B", vec_b, MemoryScope.PROJECT, "Apollo", now, entities=["Project:Apollo"])
     store.add(t_b)
 
-    context = UserContext(user_id="u1", project_ids=["Apollo"])
+    context = UserContext(user_id="u1", email="test@example.com", groups=["Apollo"])
 
     # Boost factor 1.5. B becomes 0.9. A stays 0.8.
     # Hint threshold 0.85.

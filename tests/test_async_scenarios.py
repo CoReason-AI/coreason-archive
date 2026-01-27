@@ -12,6 +12,7 @@ import asyncio
 from typing import List
 
 import pytest
+from coreason_identity.models import UserContext
 
 from coreason_archive.archive import CoreasonArchive
 from coreason_archive.graph_store import GraphStore
@@ -54,6 +55,7 @@ async def test_concurrent_ingestion() -> None:
 
     # 1. Fire off 50 additions concurrently
     tasks = []
+    user_ctx = UserContext(user_id="u1", email="test@example.com")
     for i in range(50):
         tasks.append(
             archive.add_thought(
@@ -61,7 +63,7 @@ async def test_concurrent_ingestion() -> None:
                 response=f"r{i}",
                 scope=MemoryScope.USER,
                 scope_id="u1",
-                user_id="u1",
+                user_context=user_ctx,
             )
         )
 
@@ -111,7 +113,8 @@ async def test_task_cleanup() -> None:
     archive = CoreasonArchive(v_store, g_store, embedder, extractor)
 
     # Add a thought
-    await archive.add_thought("p", "r", MemoryScope.USER, "u1", "u1")
+    user_ctx = UserContext(user_id="u1", email="test@example.com")
+    await archive.add_thought("p", "r", MemoryScope.USER, "u1", user_context=user_ctx)
 
     # Assert task exists initially (or quickly grab it)
     # Since add_thought is async but create_task is immediate,
@@ -157,9 +160,10 @@ async def test_mixed_failure_success() -> None:
     archive = CoreasonArchive(v_store, g_store, embedder, extractor)
 
     # Add 1 success, 1 fail, 1 success
-    await archive.add_thought("p1", "SUCCESS 1", MemoryScope.USER, "u1", "u1")
-    await archive.add_thought("p2", "FAIL THIS", MemoryScope.USER, "u1", "u1")
-    await archive.add_thought("p3", "SUCCESS 2", MemoryScope.USER, "u1", "u1")
+    user_ctx = UserContext(user_id="u1", email="test@example.com")
+    await archive.add_thought("p1", "SUCCESS 1", MemoryScope.USER, "u1", user_context=user_ctx)
+    await archive.add_thought("p2", "FAIL THIS", MemoryScope.USER, "u1", user_context=user_ctx)
+    await archive.add_thought("p3", "SUCCESS 2", MemoryScope.USER, "u1", user_context=user_ctx)
 
     # Wait for tasks
     if archive._background_tasks:
