@@ -13,7 +13,6 @@ from unittest.mock import MagicMock
 from uuid import uuid4
 
 import pytest
-
 from coreason_identity.models import UserContext
 
 from coreason_archive.archive import CoreasonArchive
@@ -111,7 +110,12 @@ async def test_complex_retrieval_flow(base_thought: CachedThought) -> None:
     # Add thoughts
     user_ctx = UserContext(user_id="u1", email="test@example.com")
     t1 = await archive.add_thought(
-        prompt="foo", response="bar", scope=MemoryScope.USER, scope_id="u1", user_context=user_ctx, source_urns=["urn:doc:1"]
+        prompt="foo",
+        response="bar",
+        scope=MemoryScope.USER,
+        scope_id="u1",
+        user_context=user_ctx,
+        source_urns=["urn:doc:1"],
     )
 
     context = UserContext(user_id="u1", email="test@example.com")

@@ -12,7 +12,6 @@ import asyncio
 from typing import List
 
 import pytest
-
 from coreason_identity.models import UserContext
 
 from coreason_archive.archive import CoreasonArchive

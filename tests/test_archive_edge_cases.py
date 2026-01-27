@@ -11,7 +11,6 @@
 from typing import List, Tuple
 
 import pytest
-
 from coreason_identity.models import UserContext
 
 from coreason_archive.archive import CoreasonArchive
@@ -112,7 +111,11 @@ async def test_full_relocation_flow_with_defined_hierarchy(
 
     user_ctx = UserContext(user_id=user_id, email="test@example.com")
     thought = await archive.add_thought(
-        prompt="Update code", response="Modifying the kernel", scope=MemoryScope.USER, scope_id=user_id, user_context=user_ctx
+        prompt="Update code",
+        response="Modifying the kernel",
+        scope=MemoryScope.USER,
+        scope_id=user_id,
+        user_context=user_ctx,
     )
     # Manually attach entity
     thought.entities = ["Project:Zion"]

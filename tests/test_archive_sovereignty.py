@@ -1,15 +1,19 @@
-import pytest
 from typing import List
+
+import pytest
+from coreason_identity.models import UserContext
+
 from coreason_archive.archive import CoreasonArchive
-from coreason_archive.vector_store import VectorStore
 from coreason_archive.graph_store import GraphStore
 from coreason_archive.interfaces import Embedder
-from coreason_identity.models import UserContext
 from coreason_archive.models import MemoryScope
+from coreason_archive.vector_store import VectorStore
+
 
 class MockEmbedder(Embedder):
     def embed(self, text: str) -> List[float]:
         return [0.1] * 1536
+
 
 @pytest.mark.asyncio
 async def test_sovereignty_violation() -> None:

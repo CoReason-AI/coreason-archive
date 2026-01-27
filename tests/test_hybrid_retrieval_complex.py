@@ -12,7 +12,6 @@ from typing import List, Tuple
 from uuid import uuid4
 
 import pytest
-
 from coreason_identity.models import UserContext
 
 from coreason_archive.archive import CoreasonArchive
@@ -96,7 +95,9 @@ async def test_security_filtering_on_graph_sourced_thought(
     # 1. Add "Secret" Thought
     # Use "miss" to ensure low vector similarity (so it depends on Graph Sourcing)
     admin_ctx = UserContext(user_id="admin", email="test@example.com", groups=["RestrictedProject"])
-    secret_thought = await archive.add_thought("miss", "secret info", MemoryScope.PROJECT, "RestrictedProject", user_context=admin_ctx)
+    secret_thought = await archive.add_thought(
+        "miss", "secret info", MemoryScope.PROJECT, "RestrictedProject", user_context=admin_ctx
+    )
     secret_thought.entities = ["Entity:Secret"]  # Manually link
 
     # Ensure Graph Link exists (since we skipped background extraction or manually set entities)

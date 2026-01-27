@@ -11,7 +11,6 @@
 from typing import List, Tuple
 
 import pytest
-
 from coreason_identity.models import UserContext
 
 from coreason_archive.archive import CoreasonArchive

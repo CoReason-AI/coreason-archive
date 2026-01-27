@@ -13,7 +13,6 @@ from typing import List
 from uuid import uuid4
 
 import pytest
-
 from coreason_identity.models import UserContext
 
 from coreason_archive.archive import CoreasonArchive
