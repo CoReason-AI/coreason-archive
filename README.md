@@ -36,6 +36,8 @@ The agent must implement the **Scope-Link-Rank-Retrieve Loop**:
     *   We implement **Time-Aware Retrieval** where older memories have lower retrieval scores unless explicitly pinned.
 4.  **Memory Portability (The Digital Twin):**
     *   When a user moves departments, their *personal* cognitive state follows them, but their *former team's* secrets are left behind.
+5.  **Asynchronous & Framework-Agnostic:**
+    *   The system utilizes a `TaskRunner` abstraction (defaulting to `asyncio`/`anyio`) to handle background ingestion tasks, ensuring it can be integrated into any Python stack (FastAPI, Django, CLI) without vendor lock-in.
 
 ## Getting Started
 
