@@ -87,7 +87,9 @@ class CachedThought(BaseModel):
     final_response: str          # The "What"
 
     # Metadata
+    owner_id: str                # ID of the user who owns this thought
     source_urns: List[str]       # Links to MCP docs
+    is_stale: bool               # Flag indicating if the source information is outdated
     created_at: datetime
     ttl_seconds: int             # Decay factor
     access_roles: List[str]      # RBAC claims required
@@ -100,4 +102,53 @@ class CachedThought(BaseModel):
     *   *Step 1:* Vector Search -> Top 20 Candidates.
     *   *Step 2:* Graph Traversal -> Boost score if Candidate is linked to Active Project Node.
     *   *Step 3:* Decay -> Apply Time decay.
-3.  **Background Worker:** Use FastAPI BackgroundTasks for the "Entity Extraction" step. Do not block the user response while parsing entities for the graph.
+3.  **Background Worker:** Use the `TaskRunner` protocol (defaulting to `AsyncIOTaskRunner` using `asyncio` or `anyio`) for the "Entity Extraction" step. Do not block the user response while parsing entities for the graph. This ensures the library remains framework-agnostic.
+
+## Python Usage Example
+
+```python
+import asyncio
+from uuid import uuid4
+from coreason_archive.archive import CoreasonArchive
+from coreason_archive.vector_store import VectorStore
+from coreason_archive.graph_store import GraphStore
+from coreason_archive.utils.stubs import StubEmbedder
+from coreason_archive.models import MemoryScope
+from coreason_identity.models import UserContext
+
+async def main():
+    # 1. Initialize Components
+    archive = CoreasonArchive(
+        vector_store=VectorStore(),
+        graph_store=GraphStore(),
+        embedder=StubEmbedder(),
+        # task_runner defaults to AsyncIOTaskRunner
+    )
+
+    # 2. Define Context
+    user_context = UserContext(
+        user_id="user_123",
+        email="user@example.com",
+        groups=["project_apollo"]
+    )
+
+    # 3. Add a Thought
+    thought = await archive.add_thought(
+        prompt="How do we handle error retries?",
+        response="We use exponential backoff with jitter.",
+        scope=MemoryScope.PROJECT,
+        scope_id="project_apollo",
+        user_context=user_context
+    )
+    print(f"Added thought: {thought.id}")
+
+    # 4. Search
+    results = await archive.smart_lookup(
+        query="retry policy",
+        context=user_context
+    )
+    print(f"Search Result: {results.content}")
+
+if __name__ == "__main__":
+    asyncio.run(main())
+```

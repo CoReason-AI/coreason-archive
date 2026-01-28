@@ -4,6 +4,7 @@
 **Architectural Role:** The "Hippocampus" (Long-Term Episodic & Semantic Memory)
 **Core Philosophy:** "Context is King. Compute Once, Recall Forever. Truth is Relative to Scope."
 **Dependencies:** coreason-identity (RBAC), coreason-economist (Arbitrage), coreason-mcp (Data Source)
+**Python Libraries:** anyio, httpx, numpy, networkx, pydantic, loguru
 
 ## 1. Executive Summary
 
@@ -145,7 +146,9 @@ class CachedThought(BaseModel):
     final_response: str          # The "What"
 
     # Metadata
+    owner_id: str                # ID of the user who owns this thought
     source_urns: List[str]       # Links to MCP docs
+    is_stale: bool               # Flag indicating if the source information is outdated
     created_at: datetime
     ttl_seconds: int             # Decay factor
     access_roles: List[str]      # RBAC claims required
@@ -158,4 +161,4 @@ class CachedThought(BaseModel):
     *   *Step 1:* Vector Search -> Top 20 Candidates.
     *   *Step 2:* Graph Traversal -> Boost score if Candidate is linked to Active Project Node.
     *   *Step 3:* Decay -> Apply Time decay.
-3.  **Background Worker:** Use FastAPI BackgroundTasks for the "Entity Extraction" step. Do not block the user response while parsing entities for the graph.
+3.  **Background Worker:** Use the `TaskRunner` protocol (defaulting to `AsyncIOTaskRunner` using `asyncio` or `anyio`) for the "Entity Extraction" step. Do not block the user response while parsing entities for the graph. This ensures the library remains framework-agnostic.
