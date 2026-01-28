@@ -9,7 +9,7 @@
 # Source Code: https://github.com/CoReason-AI/coreason_archive
 
 from pathlib import Path
-from unittest.mock import patch
+from unittest.mock import MagicMock, patch
 
 import pytest
 
@@ -75,8 +75,11 @@ async def test_cli_no_command() -> None:
 def test_main_sync_wrapper() -> None:
     """Test the synchronous main wrapper."""
     with patch("coreason_archive.main.asyncio.run") as mock_run:
-        main()
-        mock_run.assert_called_once()
+        # Force MagicMock to avoid RuntimeWarning about unawaited AsyncMock
+        with patch("coreason_archive.main.run_async_main", new_callable=MagicMock) as mock_async_main:
+            main()
+            mock_run.assert_called_once()
+            mock_async_main.assert_called_once()
 
 
 def test_ensure_data_dir(tmp_path: Path) -> None:
