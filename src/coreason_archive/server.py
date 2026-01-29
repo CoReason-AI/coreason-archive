@@ -12,7 +12,6 @@ from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 from typing import Any, List, Optional, cast
 
-from coreason_identity.models import UserContext
 from fastapi import Depends, FastAPI, HTTPException, Request, status
 from pydantic import BaseModel
 
@@ -21,6 +20,7 @@ from coreason_archive.main import init_archive, save_archive
 from coreason_archive.matchmaker import SearchResult
 from coreason_archive.models import MemoryScope
 from coreason_archive.utils.logger import logger
+from coreason_identity.models import UserContext
 
 
 class ThoughtRequest(BaseModel):
@@ -59,10 +59,9 @@ def get_archive(request: Request) -> CoreasonArchive:
     return cast(CoreasonArchive, request.app.state.archive)
 
 
-@app.post("/thoughts", status_code=status.HTTP_201_CREATED)
+@app.post("/thoughts", status_code=status.HTTP_201_CREATED)  # type: ignore[misc, unused-ignore]
 async def add_thought(
-    req: ThoughtRequest,
-    archive: CoreasonArchive = Depends(get_archive),  # noqa: B008
+    req: ThoughtRequest, archive: CoreasonArchive = Depends(get_archive)  # noqa: B008
 ) -> dict[str, str]:
     # Validate scope early
     try:
@@ -107,10 +106,9 @@ async def add_thought(
         raise HTTPException(status_code=500, detail="Internal Server Error") from e
 
 
-@app.post("/search")
+@app.post("/search")  # type: ignore[misc, unused-ignore]
 async def search(
-    req: SearchRequest,
-    archive: CoreasonArchive = Depends(get_archive),  # noqa: B008
+    req: SearchRequest, archive: CoreasonArchive = Depends(get_archive)  # noqa: B008
 ) -> SearchResult:
     try:
         result = await archive.smart_lookup(req.query, req.context)
@@ -120,7 +118,7 @@ async def search(
         raise HTTPException(status_code=500, detail="Internal Server Error") from e
 
 
-@app.get("/health")
+@app.get("/health")  # type: ignore[misc, unused-ignore]
 async def health(archive: CoreasonArchive = Depends(get_archive)) -> dict[str, Any]:  # noqa: B008
     v_size = len(archive.vector_store.thoughts) if hasattr(archive.vector_store, "thoughts") else "unknown"
     g_nodes = len(archive.graph_store.graph.nodes) if hasattr(archive.graph_store, "graph") else "unknown"
