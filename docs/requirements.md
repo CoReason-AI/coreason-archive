@@ -4,7 +4,7 @@
 **Architectural Role:** The "Hippocampus" (Long-Term Episodic & Semantic Memory)
 **Core Philosophy:** "Context is King. Compute Once, Recall Forever. Truth is Relative to Scope."
 **Dependencies:** coreason-identity (RBAC), coreason-economist (Arbitrage), coreason-mcp (Data Source)
-**Python Libraries:** anyio, httpx, numpy, networkx, pydantic, loguru
+**Python Libraries:** anyio, httpx, numpy, networkx, pydantic, loguru, fastapi, uvicorn
 
 ## 1. Executive Summary
 

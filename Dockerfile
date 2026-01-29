@@ -35,3 +35,12 @@ COPY --from=builder /wheels /wheels
 
 # Install the application wheel
 RUN pip install --no-cache-dir /wheels/*.whl
+
+# Expose port
+EXPOSE 8000
+
+# Define volume for data persistence
+VOLUME ["/home/appuser/app/data"]
+
+# Run the FastAPI server
+CMD ["uvicorn", "coreason_archive.server:app", "--host", "0.0.0.0", "--port", "8000"]
