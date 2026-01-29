@@ -2,7 +2,7 @@
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
-from fastapi import status
+from fastapi import HTTPException, status
 from fastapi.testclient import TestClient
 
 from coreason_archive.matchmaker import MatchStrategy, SearchResult
@@ -220,6 +220,6 @@ def test_get_archive_uninitialized() -> None:
 
     mock_request.app.state = MockState()
 
-    with pytest.raises(Exception) as exc:  # It raises HTTPException
+    with pytest.raises(HTTPException) as exc:
         get_archive(mock_request)
     assert exc.value.status_code == status.HTTP_503_SERVICE_UNAVAILABLE
