@@ -104,7 +104,69 @@ class CachedThought(BaseModel):
     *   *Step 3:* Decay -> Apply Time decay.
 3.  **Background Worker:** Use the `TaskRunner` protocol (defaulting to `AsyncIOTaskRunner` using `asyncio` or `anyio`) for the "Entity Extraction" step. Do not block the user response while parsing entities for the graph. This ensures the library remains framework-agnostic.
 
-## Python Usage Example
+## Server Mode (Service C)
+
+The library can be run as a standalone REST API service using FastAPI. This allows other services (Cortex, Orchestrator) to ingest and retrieve thoughts over HTTP.
+
+### Running the Server
+
+**Using Docker:**
+```bash
+docker build -t coreason-archive .
+docker run -p 8000:8000 -v $(pwd)/data:/home/appuser/app/data coreason-archive
+```
+
+**Using Uvicorn directly:**
+```bash
+poetry run uvicorn coreason_archive.server:app --host 0.0.0.0 --port 8000
+```
+
+### API Endpoints
+
+#### `POST /thoughts`
+Ingest a new thought into the archive.
+
+**Request:**
+```json
+{
+  "prompt": "How do we handle retries?",
+  "response": "Exponential backoff.",
+  "user_id": "alice",
+  "scope": "PROJECT",
+  "project_id": "apollo"
+}
+```
+
+**Response:**
+```json
+{
+  "status": "success",
+  "thought_id": "123e4567-e89b-12d3-a456-426614174000"
+}
+```
+
+#### `POST /search`
+Perform a smart lookup based on query and context.
+
+**Request:**
+```json
+{
+  "query": "retry policy",
+  "context": {
+    "user_id": "alice",
+    "email": "alice@coreason.ai",
+    "groups": ["apollo"]
+  }
+}
+```
+
+**Response:**
+Returns a `SearchResult` object containing the strategy used (Exact Hit, Semantic Hint, etc.) and the content.
+
+#### `GET /health`
+Check the status of the service and store statistics.
+
+## Python Usage Example (Library Mode)
 
 ```python
 import asyncio
