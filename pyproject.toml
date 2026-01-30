@@ -1,6 +1,6 @@
 [tool.poetry]
 name = "coreason_archive"
-version = "0.5.1"
+version = "0.6.0"
 description = "persistence layer for Cognitive State across the CoReason ecosystem"
 authors = ["Gowtham A Rao <gowtham.rao@coreason.ai>"]
 license = "Prosperity-3.0"
@@ -16,6 +16,8 @@ numpy = ">=1.26.0"
 coreason-identity = "*"
 anyio = "^4.12.1"
 httpx = "^0.28.1"
+fastapi = "^0.110.0"
+uvicorn = {extras = ["standard"], version = "^0.29.0"}
 
 [tool.poetry.group.dev.dependencies]
 pytest = "^9.0.2"
@@ -33,7 +35,7 @@ build-backend = "poetry.core.masonry.api"
 
 [project]
 name = "coreason_archive"
-version = "0.5.1"
+version = "0.6.0"
 description = "persistence layer for Cognitive State across the CoReason ecosystem"
 readme = "README.md"
 requires-python = ">=3.11"

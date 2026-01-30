@@ -60,11 +60,19 @@ The agent must implement the **Scope-Link-Rank-Retrieve Loop**:
 
 ### Usage
 
--   Run the linter:
+-   **Run as a Service (REST API):**
+    ```sh
+    poetry run uvicorn coreason_archive.server:app --host 0.0.0.0 --port 8000
+    ```
+-   **Run CLI (Add Thought):**
+    ```sh
+    poetry run python src/coreason_archive/main.py add --prompt "Test" --response "Test Response" --user "Alice"
+    ```
+-   **Run the linter:**
     ```sh
     poetry run pre-commit run --all-files
     ```
--   Run the tests:
+-   **Run the tests:**
     ```sh
     poetry run pytest
     ```
